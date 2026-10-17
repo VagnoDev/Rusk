@@ -49,7 +49,7 @@ pub fn keybinding(key: KeyEvent, mode: &Mode) -> Option<Action> {
         Mode::Command => {
             match key.code {
                 KeyCode::Esc => Some(Action::EscCommand),
-                KeyCode::Char(c) => Some(Action::InsertCommand),
+                KeyCode::Char(_c) => Some(Action::InsertCommand),
                 KeyCode::Enter => Some(Action::SendCommand),
                 _ => None
             }

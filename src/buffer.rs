@@ -1,7 +1,8 @@
 use std::fs::read_to_string;
 
-use crate::{gui::display_manager::draw, input::Mode};
 use crate::context_manager::EditorContext;
+use crate::gui::display_manager::{self, Display};
+use crate::{input::Mode};
 
 #[derive(Debug)]
 pub struct Buffer {
@@ -9,6 +10,7 @@ pub struct Buffer {
     pub row: usize,
     pub column: usize,
 }
+
 
 pub fn fetch(file: &str) -> Buffer {
     let mut result = Vec::new();
@@ -35,7 +37,6 @@ pub fn move_right(lines: &mut Buffer) {
     }
 
     lines.row += 1;
-    draw(lines);
 }
 
 pub fn move_left(lines: &mut Buffer) {
@@ -44,7 +45,6 @@ pub fn move_left(lines: &mut Buffer) {
     } else {
         lines.row -= 1
     }
-    draw(lines);
 }
 
 pub fn move_down(lines: &mut Buffer) {
@@ -63,7 +63,6 @@ pub fn move_down(lines: &mut Buffer) {
     } else if lines.row >= line_len {
         lines.row = line_len - 1;
     }
-    draw(lines);
 }
 
 pub fn move_up(lines: &mut Buffer) {
@@ -72,7 +71,6 @@ pub fn move_up(lines: &mut Buffer) {
     } else {
         lines.column -= 1
     }
-    draw(lines);
 }
 
 pub fn insert_char(c: char, buffer: &mut Buffer) {
@@ -81,25 +79,21 @@ pub fn insert_char(c: char, buffer: &mut Buffer) {
     };
     line.insert(buffer.row, c);
     buffer.row += 1;
-
-    draw(buffer);
 }
 
 pub fn insert_forward(buffer: &mut Buffer, context: &mut EditorContext) {
     buffer.row += 1;
 
     context.mode = Mode::Insert;
-
-    draw(buffer);
 }
 
 pub fn insert_backward(buffer: &mut Buffer, context: &mut EditorContext) {
-    if buffer.row == 0 { return; }
+    if buffer.row == 0 {
+        return;
+    }
 
     buffer.row -= 1;
     context.mode = Mode::Insert;
-
-    draw(buffer);
 }
 
 pub fn set_normal(context: &mut EditorContext) {

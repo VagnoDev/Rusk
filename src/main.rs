@@ -2,12 +2,12 @@ use std::{char, io, task::Context};
 
 use crossterm::{
     event::{self, Event, KeyEventKind},
-    queue,
 };
+use crate::gui::display_manager::{Cell, Display};
 
 use crate::{
-    buffer::{insert_char, insert_forward, move_down, move_left, move_right, move_up, set_normal}, gui::display_manager::draw, input::{
-        Action::{self, MoveDown, MoveLeft, MoveRight, MoveUp},
+    buffer::{insert_char, insert_forward, move_down, move_left, move_right, move_up, set_normal}, input::{
+        Action::{self},
         keybinding,
     },
 };
@@ -25,9 +25,11 @@ mod input;
 mod save;
 
 fn main() -> std::io::Result<()> {
-    terminal::enable_raw_mode();
+    terminal::enable_raw_mode()?;
     let mut lines = buffer::fetch("src/test.txt");
-    draw(&mut lines);
+
+    let mut display = Display::new()?;
+    display.draw(&mut lines)?;
     //println!("{:#?}", lines);
 
     let mut context = EditorContext { mode: Mode::Normal };
@@ -46,6 +48,7 @@ fn main() -> std::io::Result<()> {
             _ => {}
         }
         manager(&mut queue, &mut lines, &mut context);
+        display.draw(&mut lines)?;
     }
 }
 
@@ -55,7 +58,10 @@ fn manager(queue: &mut VecDeque<Action>, lines: &mut Buffer, context: &mut Edito
     };
     match context.mode {
         Mode::Normal => match first {
-            Action::MoveLeft => move_left(lines),
+            Action::MoveLeft => {
+                move_left(lines)
+                
+            },
             Action::MoveRight => move_right(lines),
             Action::MoveUp => move_up(lines),
             Action::MoveDown => move_down(lines),
