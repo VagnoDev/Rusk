@@ -1,6 +1,8 @@
+
 use crossterm::{
     event::{KeyCode, KeyEvent},
 };
+
 
 pub enum Action {
     MoveLeft,
@@ -9,23 +11,32 @@ pub enum Action {
     MoveDown,
     InsertChar(char),
     SetNormal,
-    SetInsert,
     SetCommand,
     EscCommand,
-    InsertCommand,
     SendCommand,
     InsertForward,
     InserBackward,
+    ExplorerUp,
+    ExplorerDown,
+    EnterFile,
+    SetExplorer,
     Quit,
 }
 
 pub enum Mode {
     Normal,
     Insert,
-    Command
+    Command,
+    Explorer
 }
 
-pub fn keybinding(key: KeyEvent, mode: &Mode) -> Option<Action> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingKey {
+    None,
+    Space
+}
+
+pub fn keybinding(key: KeyEvent, mode: &Mode, pending_key: &mut PendingKey) -> Option<Action> {
     match mode {
         Mode::Normal => {
         match key.code {
@@ -36,6 +47,14 @@ pub fn keybinding(key: KeyEvent, mode: &Mode) -> Option<Action> {
             KeyCode::Char('a') => Some(Action::InsertForward),
             KeyCode::Char('i') => Some(Action::InserBackward),
             KeyCode::Char(':') => Some(Action::SetCommand),
+            KeyCode::Char(' ') => {
+                *pending_key = PendingKey::Space;
+                None 
+            }
+            KeyCode::Char('e') if *pending_key == PendingKey::Space => {
+                *pending_key = PendingKey::None;
+                Some(Action::SetExplorer)
+            }
             _ => None,
         }
         }
@@ -49,9 +68,20 @@ pub fn keybinding(key: KeyEvent, mode: &Mode) -> Option<Action> {
         Mode::Command => {
             match key.code {
                 KeyCode::Esc => Some(Action::EscCommand),
-                KeyCode::Char(_c) => Some(Action::InsertCommand),
+                KeyCode::Char(char) => Some(Action::InsertChar(char)),
                 KeyCode::Enter => Some(Action::SendCommand),
                 _ => None
+            }
+        }
+        Mode::Explorer => {
+            match key.code {
+            KeyCode::Up => Some(Action::ExplorerUp),
+            KeyCode::Down => Some(Action::ExplorerDown),
+            KeyCode::Enter => Some(Action::EnterFile),
+            KeyCode::Esc => Some(Action::SetNormal),
+            KeyCode::Char('j') => Some(Action::ExplorerDown),
+            KeyCode::Char('k') => Some(Action::ExplorerUp),
+            _ => None
             }
         }
     }

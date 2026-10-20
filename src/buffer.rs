@@ -1,8 +1,7 @@
 use std::fs::read_to_string;
 
 use crate::context_manager::EditorContext;
-use crate::gui::display_manager::{self, Display};
-use crate::{input::Mode};
+use crate::input::Mode;
 
 #[derive(Debug)]
 pub struct Buffer {
@@ -10,7 +9,6 @@ pub struct Buffer {
     pub row: usize,
     pub column: usize,
 }
-
 
 pub fn fetch(file: &str) -> Buffer {
     let mut result = Vec::new();
@@ -22,6 +20,11 @@ pub fn fetch(file: &str) -> Buffer {
     {
         result.push(line.to_string());
     }
+
+    if result.is_empty() {
+        result.push(String::new());
+    }
+
     Buffer {
         lines: result,
         row: 0,
@@ -77,7 +80,12 @@ pub fn insert_char(c: char, buffer: &mut Buffer) {
     let Some(line) = buffer.lines.get_mut(buffer.column) else {
         return;
     };
-    line.insert(buffer.row, c);
+    let byte_index = line
+        .char_indices()
+        .nth(buffer.row)
+        .map(|(index, _)| index)
+        .unwrap_or(line.len());
+    line.insert(byte_index, c);
     buffer.row += 1;
 }
 
@@ -98,4 +106,10 @@ pub fn insert_backward(buffer: &mut Buffer, context: &mut EditorContext) {
 
 pub fn set_normal(context: &mut EditorContext) {
     context.mode = Mode::Normal;
+
+    context.command_buffer.clear();
+}
+
+pub fn set_command(context: &mut EditorContext) {
+    context.mode = Mode::Command;
 }
