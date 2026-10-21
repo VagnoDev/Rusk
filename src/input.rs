@@ -20,6 +20,8 @@ pub enum Action {
     ExplorerDown,
     EnterFile,
     SetExplorer,
+    RemoveChar,
+    InserNewLine,
     Quit,
 }
 
@@ -62,6 +64,8 @@ pub fn keybinding(key: KeyEvent, mode: &Mode, pending_key: &mut PendingKey) -> O
             match key.code {
                 KeyCode::Esc => Some(Action::SetNormal),
                 KeyCode::Char(c) => Some(Action::InsertChar(c)),
+                KeyCode::Backspace => Some(Action::RemoveChar),
+                KeyCode::Enter => Some(Action::InserNewLine),
                 _ => None
             }
         }
@@ -69,6 +73,7 @@ pub fn keybinding(key: KeyEvent, mode: &Mode, pending_key: &mut PendingKey) -> O
             match key.code {
                 KeyCode::Esc => Some(Action::EscCommand),
                 KeyCode::Char(char) => Some(Action::InsertChar(char)),
+                KeyCode::Backspace => Some(Action::RemoveChar),
                 KeyCode::Enter => Some(Action::SendCommand),
                 _ => None
             }

@@ -15,7 +15,8 @@ pub struct Explorer {
 }
 
 pub fn read_dir(path: &PathBuf, depth: usize) -> Explorer {
-    let entries = std::fs::read_dir(&path).unwrap();
+    let entries = std::fs::read_dir(&path)
+        .unwrap_or_else(|e| panic!("cannot read directory {:?}: {}", path, e));
     let mut vec: Vec<Entry> = Vec::new();
 
     for entry in entries {

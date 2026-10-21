@@ -1,7 +1,7 @@
 use std::{fs::read_dir, io::stdout, path::PathBuf};
 
 use crate::{
-    Status::Continue, buffer::set_command, command_manager::execute, dir_manager::Explorer, gui::display_manager::Display, input::{Action::Quit, PendingKey},
+    Status::Continue, buffer::{insert_newline, remove_char, set_command}, command_manager::execute, dir_manager::Explorer, gui::display_manager::Display, input::{Action::Quit, PendingKey},
 };
 use crossterm::{
     event::{self, Event::{self}, KeyEventKind}, execute,
@@ -155,14 +155,19 @@ fn manager(
         Mode::Insert => match first {
             Action::InsertChar(char) => insert_char(char, lines),
             Action::SetNormal => set_normal(context),
+            Action::RemoveChar => remove_char(lines),
+            Action::InserNewLine => insert_newline(lines),
             _ => {}
         },
         Mode::Command => match first {
             Action::EscCommand => set_normal(context),
             Action::InsertChar(char) => context.command_buffer.push(char),
+            Action::RemoveChar =>  { 
+                context.command_buffer.pop();
+            },
             Action::SendCommand => {
                 return execute(context.command_buffer.as_str(), lines, &context.file_path);
-            }
+            },
             _ => {}
         },
         Mode::Explorer => match first {
