@@ -71,6 +71,7 @@ fn main() -> std::io::Result<()> {
     
             let parent = file_path
                 .parent()
+                .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or(Path::new("."));
     
             App {
