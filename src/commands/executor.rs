@@ -5,7 +5,7 @@ use crossterm::{
     terminal::{self, LeaveAlternateScreen},
 };
 
-use crate::io::save::save;
+use crate::{app::{context::{self, EditorContext}, messages::MessageLevel}, gui::status_bar::send_message, io::save::save};
 use crate::{Buffer, Status};
 
 use super::parser::Command;
@@ -20,6 +20,7 @@ pub fn execute(
 
         Command::Write => {
             save(buffer, &path.to_string())?;
+            execute!(stdout(), crossterm::cursor::Hide)?;
             Ok(Status::Continue)
         }
 

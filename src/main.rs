@@ -1,8 +1,9 @@
-use std::{io::stdout, path::PathBuf};
+use std::{io::stdout, path::PathBuf, time::Instant};
 
 use crate::{
     Status::Continue,
     app::mode::{Mode, set_command, set_normal},
+    commands::{executor, parser},
     editor::editing::{insert_newline, remove_char},
     editor::movement::{
         move_down, move_left, move_right, move_toend, move_tonext, move_toprev, move_tostart,
@@ -11,15 +12,15 @@ use crate::{
     explorer::tree::{Explorer, read_dir},
     gui::display::Display,
     input::keyboard::{PendingKey, keybinding},
-    commands::{executor, parser}
+    gui::status_bar::send_message,
+    app::messages::MessageLevel
 };
 use crossterm::{
-    event::{
+    cursor, event::{
         self,
         Event::{self},
         KeyEventKind,
-    },
-    execute,
+    }, execute,
 };
 
 use std::path::Path;
@@ -97,6 +98,7 @@ fn main() -> std::io::Result<()> {
         mode: Mode::Normal,
         command_buffer: String::new(),
         file_path: path.clone(),
+        current_message: None,
     };
 
     let mut display = Display::new()?;
@@ -112,18 +114,27 @@ fn main() -> std::io::Result<()> {
     )?;
 
     loop {
-        match event::read()? {
-            Event::Key(key) => {
-                if key.kind == KeyEventKind::Press {
-                    if let Some(realbind) = keybinding(key, &context.mode, &mut pending_key) {
-                        queue.push_back(realbind);
+        if event::poll(std::time::Duration::from_millis(100))? {
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        if let Some(realbind) = keybinding(key, &context.mode, &mut pending_key) {
+                            queue.push_back(realbind);
+                        }
                     }
                 }
+                Event::Resize(width, height) => {
+                    display.resize(width as u32, height as u32);
+                }
+                _ => {}
             }
-            Event::Resize(width, height) => {
-                display.resize(width as u32, height as u32);
+            let expired = match &context.current_message {
+                Some(message) => Instant::now() >= message.duration,
+                None => false,
+            };
+            if expired {
+                context.current_message = None;
             }
-            _ => {}
         }
         let status = manager(&mut queue, &mut app.editor, &mut context, &mut app.explorer)?;
 
@@ -194,11 +205,24 @@ fn manager(
             Action::SendCommand => {
                 let command = parser::parse(context.command_buffer.as_str());
             
-                return executor::execute(
+                let is_write = matches!(&command, parser::Command::Write);
+            
+                let status = executor::execute(
                     command,
                     lines,
                     &context.file_path,
-                );
+                )?;
+            
+                if is_write {
+                    set_normal(context);
+                    send_message(
+                        context,
+                        "File Saved.".to_string(),
+                        MessageLevel::Success,
+                    );
+                }
+            
+                return Ok(status);
             }
             _ => {}
         },
