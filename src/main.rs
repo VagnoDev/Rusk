@@ -1,47 +1,60 @@
-use std::{fs::read_dir, io::stdout, path::PathBuf};
+use std::{io::stdout, path::PathBuf};
 
 use crate::{
-    Status::Continue, buffer::{insert_newline, remove_char, set_command}, command_manager::execute, dir_manager::Explorer, gui::display_manager::Display, input::{Action::Quit, PendingKey},
+    Status::Continue,
+    app::mode::{Mode, set_command, set_normal},
+    editor::editing::{insert_newline, remove_char},
+    editor::movement::{
+        move_down, move_left, move_right, move_toend, move_tonext, move_toprev, move_tostart,
+        move_up,
+    },
+    explorer::tree::{Explorer, read_dir},
+    gui::display::Display,
+    input::keyboard::{PendingKey, keybinding},
+    commands::{executor, parser}
 };
 use crossterm::{
-    event::{self, Event::{self}, KeyEventKind}, execute,
+    event::{
+        self,
+        Event::{self},
+        KeyEventKind,
+    },
+    execute,
 };
 
 use std::path::Path;
 
 use crate::{
-    buffer::{insert_char, insert_forward, move_down, move_left, move_right, move_up, set_normal},
-    input::{
-        Action::{self},
-    },
+    app::actions::Action::{self},
+    editor::buffer,
+    editor::editing::{insert_char, insert_forward},
 };
 use crossterm::terminal;
 use std::collections::VecDeque;
 
-use crate::buffer::Buffer;
-use crate::context_manager::EditorContext;
-use crate::input::Mode;
-use crate::input::keybinding;
+use crate::app::context;
+use crate::context::EditorContext;
+use crate::editor::buffer::Buffer;
 
-mod buffer;
-mod command_manager;
-mod context_manager;
+mod app;
+mod commands;
+mod editor;
+mod explorer;
 mod gui;
 mod input;
-mod save;
-mod dir_manager;
+mod io;
 
 pub struct App {
     editor: buffer::Buffer,
-    explorer: dir_manager::Explorer,
-    sidebar_visible: bool
+    explorer: Explorer,
+    sidebar_visible: bool,
 }
 
 pub enum Status {
     Continue,
     Quit,
     OpenExplorer,
-    CloseExplorer
+    CloseExplorer,
 }
 
 fn main() -> std::io::Result<()> {
@@ -52,9 +65,7 @@ fn main() -> std::io::Result<()> {
         crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
         crossterm::cursor::MoveTo(0, 0)
     )?;
-    let path = std::env::args()
-        .nth(1)
-        .expect("Use: rusk <nomefile>");
+    let path = std::env::args().nth(1).expect("Use: rusk <nomefile>");
 
     let mut app = match Path::new(&path).is_dir() {
         true => App {
@@ -63,20 +74,20 @@ fn main() -> std::io::Result<()> {
                 row: 0,
                 column: 0,
             },
-            explorer: dir_manager::read_dir(&PathBuf::from(&path), 0),
+            explorer: read_dir(&PathBuf::from(&path), 0),
             sidebar_visible: false,
         },
         false => {
             let file_path = Path::new(&path);
-    
+
             let parent = file_path
                 .parent()
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or(Path::new("."));
-    
+
             App {
                 editor: buffer::fetch(&path),
-                explorer: dir_manager::read_dir(&PathBuf::from(parent), 0),
+                explorer: read_dir(&PathBuf::from(parent), 0),
                 sidebar_visible: false,
             }
         }
@@ -93,7 +104,12 @@ fn main() -> std::io::Result<()> {
     let mut queue = VecDeque::new();
     let mut pending_key = PendingKey::None;
 
-    display.draw(&mut app.editor, &context, &app.explorer, app.sidebar_visible)?;
+    display.draw(
+        &mut app.editor,
+        &context,
+        &app.explorer,
+        app.sidebar_visible,
+    )?;
 
     loop {
         match event::read()? {
@@ -112,20 +128,24 @@ fn main() -> std::io::Result<()> {
         let status = manager(&mut queue, &mut app.editor, &mut context, &mut app.explorer)?;
 
         match status {
-            Status::Continue => {},
+            Status::Continue => {}
             Status::OpenExplorer => {
                 app.sidebar_visible = true;
                 context.mode = Mode::Explorer
             }
-            Status::CloseExplorer =>{
+            Status::CloseExplorer => {
                 app.sidebar_visible = false;
                 context.mode = Mode::Normal
             }
             Status::Quit => break,
         }
 
-        display.draw(&mut app.editor, &context, &app.explorer, app.sidebar_visible)?;
-        
+        display.draw(
+            &mut app.editor,
+            &context,
+            &app.explorer,
+            app.sidebar_visible,
+        )?;
     }
     terminal::disable_raw_mode()?;
     execute!(stdout(), terminal::LeaveAlternateScreen)?;
@@ -136,7 +156,7 @@ fn manager(
     queue: &mut VecDeque<Action>,
     lines: &mut Buffer,
     context: &mut EditorContext,
-    explorer: &mut Explorer
+    explorer: &mut Explorer,
 ) -> std::io::Result<Status> {
     let Some(first) = queue.pop_front() else {
         return Ok(Continue);
@@ -149,9 +169,13 @@ fn manager(
             Action::MoveDown => move_down(lines),
             Action::InsertForward => insert_forward(lines, context),
             Action::SetCommand => set_command(context),
+            Action::StartLine => move_tostart(lines),
+            Action::EndLine => move_toend(lines),
+            Action::MoveNext => move_tonext(lines),
+            Action::MovePrev => move_toprev(lines),
             Action::SetExplorer => {
                 return Ok(Status::OpenExplorer);
-            },
+            }
             _ => {}
         },
         Mode::Insert => match first {
@@ -164,34 +188,40 @@ fn manager(
         Mode::Command => match first {
             Action::EscCommand => set_normal(context),
             Action::InsertChar(char) => context.command_buffer.push(char),
-            Action::RemoveChar =>  { 
+            Action::RemoveChar => {
                 context.command_buffer.pop();
-            },
+            }
             Action::SendCommand => {
-                return execute(context.command_buffer.as_str(), lines, &context.file_path);
-            },
+                let command = parser::parse(context.command_buffer.as_str());
+            
+                return executor::execute(
+                    command,
+                    lines,
+                    &context.file_path,
+                );
+            }
             _ => {}
         },
         Mode::Explorer => match first {
             Action::SetNormal => {
                 set_normal(context);
-                return Ok(Status::CloseExplorer)
-            },
+                return Ok(Status::CloseExplorer);
+            }
             Action::ExplorerDown => explorer.explorer_down(),
             Action::ExplorerUp => explorer.explorer_up(),
             Action::EnterFile => {
-                if explorer.entries[explorer.selected].is_dir{
+                if explorer.entries[explorer.selected].is_dir {
                     explorer.explorer_toggle()
                 } else {
-                   let path = explorer.entries[explorer.selected].path.clone();
-                   if let Some(path) = path.to_str() {
-                       *lines = buffer::fetch(path);
-                       context.file_path = path.to_string();
-                   }
+                    let path = explorer.entries[explorer.selected].path.clone();
+                    if let Some(path) = path.to_str() {
+                        *lines = buffer::fetch(path);
+                        context.file_path = path.to_string();
+                    }
                 }
-            } 
+            }
             _ => {}
-        }
+        },
     }
     Ok(Continue)
 }

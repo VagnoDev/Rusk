@@ -1,7 +1,6 @@
-use crate::buffer::Buffer;
+use crate::editor::buffer::Buffer;
 
 use std::fs::write;
-
 
 pub fn save(buffer: &Buffer, path: &String) -> std::io::Result<()> {
     let content = buffer.lines.join("\n");
@@ -9,5 +8,4 @@ pub fn save(buffer: &Buffer, path: &String) -> std::io::Result<()> {
     write(path, content)?;
 
     Ok(())
-
-} 
+}

@@ -1,4 +1,4 @@
-use crate::input::Mode;
+use crate::app::mode::Mode;
 
 pub struct EditorContext {
     pub mode: Mode,

@@ -1,37 +1,11 @@
+use crate::app::actions::{Action};
+use crate::app::mode::Mode;
 
 use crossterm::{
     event::{KeyCode, KeyEvent},
 };
 
 
-pub enum Action {
-    MoveLeft,
-    MoveRight,
-    MoveUp,
-    MoveDown,
-    InsertChar(char),
-    SetNormal,
-    SetCommand,
-    EscCommand,
-    SendCommand,
-    InsertForward,
-    InserBackward,
-    ExplorerUp,
-    ExplorerDown,
-    EnterFile,
-    SetExplorer,
-    RemoveChar,
-    InserNewLine,
-    Quit,
-}
-
-#[derive(Debug)]
-pub enum Mode {
-    Normal,
-    Insert,
-    Command,
-    Explorer
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingKey {
@@ -50,6 +24,10 @@ pub fn keybinding(key: KeyEvent, mode: &Mode, pending_key: &mut PendingKey) -> O
             KeyCode::Char('a') => Some(Action::InsertForward),
             KeyCode::Char('i') => Some(Action::InserBackward),
             KeyCode::Char(':') => Some(Action::SetCommand),
+            KeyCode::Char('0') => Some(Action::StartLine),
+            KeyCode::Char('$') => Some(Action::EndLine),
+            KeyCode::Char('w') => Some(Action::MoveNext),
+            KeyCode::Char('b') => Some(Action::MovePrev),
             KeyCode::Char(' ') => {
                 *pending_key = PendingKey::Space;
                 None 
