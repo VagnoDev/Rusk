@@ -25,6 +25,7 @@ pub enum Action {
     Quit,
 }
 
+#[derive(Debug)]
 pub enum Mode {
     Normal,
     Insert,

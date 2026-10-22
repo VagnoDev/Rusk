@@ -123,6 +123,8 @@ fn main() -> std::io::Result<()> {
             }
             Status::Quit => break,
         }
+
+        display.draw(&mut app.editor, &context, &app.explorer, app.sidebar_visible)?;
         
     }
     terminal::disable_raw_mode()?;
