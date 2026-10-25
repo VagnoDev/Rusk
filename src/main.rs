@@ -2,25 +2,30 @@ use std::{io::stdout, path::PathBuf, time::Instant};
 
 use crate::{
     Status::Continue,
-    app::mode::{Mode, set_command, set_normal},
+    app::{
+        messages::MessageLevel,
+        mode::{Mode, set_command, set_normal},
+    },
     commands::{executor, parser},
-    editor::editing::{insert_newline, remove_char},
-    editor::movement::{
-        move_down, move_left, move_right, move_toend, move_tonext, move_toprev, move_tostart,
-        move_up,
+    editor::{
+        editing::{insert_backward, insert_newline, remove_char},
+        movement::{
+            move_down, move_left, move_right, move_toend, move_tonext, move_toprev, move_tostart,
+            move_up,
+        },
     },
     explorer::tree::{Explorer, read_dir},
-    gui::display::Display,
+    gui::{display::Display, status_bar::send_message},
     input::keyboard::{PendingKey, keybinding},
-    gui::status_bar::send_message,
-    app::messages::MessageLevel
+    io::save::save,
 };
 use crossterm::{
-    cursor, event::{
+    event::{
         self,
         Event::{self},
         KeyEventKind,
-    }, execute,
+    },
+    execute,
 };
 
 use std::path::Path;
@@ -59,6 +64,54 @@ pub enum Status {
 }
 
 fn main() -> std::io::Result<()> {
+    let path = std::env::args().nth(1);
+
+    let mut app = match &path {
+        Some(path) => match Path::new(&path).is_dir() {
+            true => App {
+                editor: Buffer {
+                    lines: vec![String::new()],
+                    row: 0,
+                    column: 0,
+                },
+                explorer: read_dir(&PathBuf::from(&path), 0),
+                sidebar_visible: false,
+            },
+            false => {
+                let file_path = Path::new(&path);
+
+                let parent = file_path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+
+                App {
+                    editor: buffer::fetch(&path)?,
+                    explorer: read_dir(&PathBuf::from(parent), 0),
+                    sidebar_visible: false,
+                }
+            }
+        },
+        None => App {
+            editor: Buffer {
+                lines: vec![String::new()],
+                row: 0,
+                column: 0,
+            },
+            explorer: read_dir(&PathBuf::from("."), 0),
+            sidebar_visible: false,
+        },
+    };
+
+    let mut context = EditorContext {
+        mode: Mode::Normal,
+        command_buffer: String::new(),
+        file_path: path.map(PathBuf::from),
+        current_message: None,
+        savedialog: false,
+        quit_after_save: false,
+    };
+
     terminal::enable_raw_mode()?;
     execute!(
         stdout(),
@@ -66,40 +119,6 @@ fn main() -> std::io::Result<()> {
         crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
         crossterm::cursor::MoveTo(0, 0)
     )?;
-    let path = std::env::args().nth(1).expect("Use: rusk <nomefile>");
-
-    let mut app = match Path::new(&path).is_dir() {
-        true => App {
-            editor: Buffer {
-                lines: vec![String::new()],
-                row: 0,
-                column: 0,
-            },
-            explorer: read_dir(&PathBuf::from(&path), 0),
-            sidebar_visible: false,
-        },
-        false => {
-            let file_path = Path::new(&path);
-
-            let parent = file_path
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(Path::new("."));
-
-            App {
-                editor: buffer::fetch(&path),
-                explorer: read_dir(&PathBuf::from(parent), 0),
-                sidebar_visible: false,
-            }
-        }
-    };
-
-    let mut context = EditorContext {
-        mode: Mode::Normal,
-        command_buffer: String::new(),
-        file_path: path.clone(),
-        current_message: None,
-    };
 
     let mut display = Display::new()?;
 
@@ -113,6 +132,8 @@ fn main() -> std::io::Result<()> {
         app.sidebar_visible,
     )?;
 
+    let mut needs_redraw = true;
+
     loop {
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
@@ -120,11 +141,13 @@ fn main() -> std::io::Result<()> {
                     if key.kind == KeyEventKind::Press {
                         if let Some(realbind) = keybinding(key, &context.mode, &mut pending_key) {
                             queue.push_back(realbind);
+                            needs_redraw = true;
                         }
                     }
                 }
                 Event::Resize(width, height) => {
                     display.resize(width as u32, height as u32);
+                    needs_redraw = true;
                 }
                 _ => {}
             }
@@ -134,6 +157,7 @@ fn main() -> std::io::Result<()> {
             };
             if expired {
                 context.current_message = None;
+                needs_redraw = true;
             }
         }
         let status = manager(&mut queue, &mut app.editor, &mut context, &mut app.explorer)?;
@@ -150,13 +174,16 @@ fn main() -> std::io::Result<()> {
             }
             Status::Quit => break,
         }
+        if needs_redraw {
+            display.draw(
+                &mut app.editor,
+                &context,
+                &app.explorer,
+                app.sidebar_visible,
+            )?;
 
-        display.draw(
-            &mut app.editor,
-            &context,
-            &app.explorer,
-            app.sidebar_visible,
-        )?;
+            needs_redraw = false;
+        }
     }
     terminal::disable_raw_mode()?;
     execute!(stdout(), terminal::LeaveAlternateScreen)?;
@@ -179,7 +206,11 @@ fn manager(
             Action::MoveUp => move_up(lines),
             Action::MoveDown => move_down(lines),
             Action::InsertForward => insert_forward(lines, context),
-            Action::SetCommand => set_command(context),
+            Action::InserBackward => insert_backward(lines, context),
+            Action::SetCommand => {
+                context.current_message = None;
+                set_command(context);
+            }
             Action::StartLine => move_tostart(lines),
             Action::EndLine => move_toend(lines),
             Action::MoveNext => move_tonext(lines),
@@ -203,25 +234,57 @@ fn manager(
                 context.command_buffer.pop();
             }
             Action::SendCommand => {
+                if context.savedialog {
+                    let path = std::path::Path::new(&context.command_buffer);
+
+                    match save(lines, path) {
+                        Ok(()) => {
+                            context.file_path = Some(path.to_path_buf());
+                            context.command_buffer.clear();
+                            context.savedialog = false;
+                            set_normal(context);
+
+                            if context.quit_after_save {
+                                context.quit_after_save = false;
+                                return Ok(Status::Quit);
+                            }
+
+                            send_message(context, "File Saved.".to_string(), MessageLevel::Success);
+                            return Ok(Status::Continue);
+                        }
+                        Err(error) => {
+                            send_message(
+                                context,
+                                format!("Cannot save file: {error}"),
+                                MessageLevel::Error,
+                            );
+                            return Ok(Status::Continue);
+                        }
+                    }
+                }
+
                 let command = parser::parse(context.command_buffer.as_str());
-            
-                let is_write = matches!(&command, parser::Command::Write);
-            
-                let status = executor::execute(
-                    command,
-                    lines,
-                    &context.file_path,
-                )?;
-            
+                let needs_filename = matches!(
+                    &command,
+                    parser::Command::Write(None) | parser::Command::WriteQuit(None)
+                );
+
+                if needs_filename && context.file_path.is_none() {
+                    context.quit_after_save = matches!(&command, parser::Command::WriteQuit(None));
+
+                    context.savedialog = true;
+                    context.command_buffer.clear();
+                    return Ok(Status::Continue);
+                }
+
+                let is_write = matches!(&command, parser::Command::Write(_));
+                let status = executor::execute(command, lines, &context.file_path)?;
+
                 if is_write {
                     set_normal(context);
-                    send_message(
-                        context,
-                        "File Saved.".to_string(),
-                        MessageLevel::Success,
-                    );
+                    send_message(context, "File Saved.".to_string(), MessageLevel::Success);
                 }
-            
+
                 return Ok(status);
             }
             _ => {}
@@ -238,9 +301,19 @@ fn manager(
                     explorer.explorer_toggle()
                 } else {
                     let path = explorer.entries[explorer.selected].path.clone();
-                    if let Some(path) = path.to_str() {
-                        *lines = buffer::fetch(path);
-                        context.file_path = path.to_string();
+
+                    match buffer::fetch(path.to_string_lossy().as_ref()) {
+                        Ok(buffer) => {
+                            *lines = buffer;
+                            context.file_path = Some(path);
+                        }
+                        Err(error) => {
+                            send_message(
+                                context,
+                                format!("Cannot open file: {error}"),
+                                MessageLevel::Error,
+                            );
+                        }
                     }
                 }
             }

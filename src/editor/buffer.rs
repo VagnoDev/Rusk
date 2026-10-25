@@ -1,4 +1,4 @@
-use std::fs::read_to_string;
+use std::{fs::read_to_string, io::ErrorKind};
 
 #[derive(Debug)]
 pub struct Buffer {
@@ -7,24 +7,33 @@ pub struct Buffer {
     pub column: usize,
 }
 
-pub fn fetch(file: &str) -> Buffer {
+pub fn fetch(file: &str) -> Result<Buffer, std::io::Error> {
     let mut result = Vec::new();
 
-    for line in read_to_string(file)
-        .unwrap()
-        .lines()
-    {
-        result.push(line.to_string());
+    let content = read_to_string(file);
+
+    match content {
+        Ok(content) => {
+            for line in content.lines() {
+                result.push(line.to_string());
+            }
+        }
+        Err(error) => {
+            if error.kind() == ErrorKind::NotFound {
+                result.push(String::new());
+            } else {
+                return Err(error);
+            }
+        }
     }
 
     if result.is_empty() {
         result.push(String::new());
     }
 
-    Buffer {
+    Ok(Buffer {
         lines: result,
         row: 0,
         column: 0,
-    }
+    })
 }
-

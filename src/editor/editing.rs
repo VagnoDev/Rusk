@@ -1,6 +1,6 @@
-use crate::editor::buffer::Buffer;
 use crate::app::context::EditorContext;
 use crate::app::mode::Mode;
+use crate::editor::buffer::Buffer;
 
 pub fn insert_char(c: char, buffer: &mut Buffer) {
     let Some(line) = buffer.lines.get_mut(buffer.column) else {
@@ -16,11 +16,14 @@ pub fn insert_char(c: char, buffer: &mut Buffer) {
 }
 
 pub fn insert_forward(buffer: &mut Buffer, context: &mut EditorContext) {
-    buffer.row += 1;
+    let line_len = buffer.lines[buffer.column].chars().count();
+
+    if line_len > 0 && buffer.row < line_len {
+        buffer.row += 1;
+    }
 
     context.mode = Mode::Insert;
 }
-
 pub fn insert_backward(buffer: &mut Buffer, context: &mut EditorContext) {
     if buffer.row == 0 {
         return;
@@ -29,7 +32,6 @@ pub fn insert_backward(buffer: &mut Buffer, context: &mut EditorContext) {
     buffer.row -= 1;
     context.mode = Mode::Insert;
 }
-
 
 pub fn remove_char(buffer: &mut Buffer) {
     if buffer.row > 0 {

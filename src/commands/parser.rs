@@ -1,8 +1,8 @@
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Quit,
-    Write,
-    WriteQuit,
+    Write(Option<String>),
+    WriteQuit(Option<String>),
     Unknown,
 }
 
@@ -13,10 +13,12 @@ pub fn parse(input: &str) -> Command {
         return Command::Unknown;
     };
 
+    let path = parts.next().map(String::from);
+
     match name {
-        "q" => Command::Quit,
-        "w" => Command::Write,
-        "wq" => Command::WriteQuit,
+        "q" if path.is_none() => Command::Quit,
+        "w" => Command::Write(path),
+        "wq" => Command::WriteQuit(path),
         _ => Command::Unknown,
     }
 }
