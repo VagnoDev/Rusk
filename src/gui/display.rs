@@ -1,8 +1,5 @@
 use crate::{
-    editor::buffer::Buffer,
-    app::context::EditorContext,
-    explorer::tree::Explorer,
-    app::mode::Mode,
+    app::context::EditorContext, app::mode::Mode, editor::buffer::Buffer, explorer::tree::Explorer,
 };
 
 use crossterm::{
@@ -12,7 +9,7 @@ use crossterm::{
     terminal,
 };
 
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 
 use super::{editor_view, explorer_view, status_bar};
 
@@ -84,7 +81,7 @@ impl Display {
     ) -> std::io::Result<()> {
         let mut stdout = stdout();
 
-        execute!(stdout, Hide)?;
+        queue!(stdout, Hide)?;
 
         for cell in &mut self.cells {
             *cell = Cell::default();
@@ -119,16 +116,16 @@ impl Display {
             )?;
         }
 
-        stdout.flush()?;
-
         match context.mode {
             Mode::Command => {
-                execute!(
+                let x = if context.savedialog {
+                    (context.command_buffer.chars().count() + 9) as u16
+                } else {
+                    (context.command_buffer.chars().count() + 1) as u16
+                };
+                queue!(
                     stdout,
-                    MoveTo(
-                        (context.command_buffer.chars().count() + 1) as u16,
-                        self.height.saturating_sub(1) as u16,
-                    ),
+                    MoveTo(x, self.height.saturating_sub(1) as u16,),
                     Show
                 )?;
             }
@@ -136,13 +133,14 @@ impl Display {
                 execute!(stdout, Hide)?;
             }
             _ => {
-                execute!(
+                queue!(
                     stdout,
                     MoveTo(buffer.row as u16, buffer.column as u16),
                     Show
                 )?;
             }
         }
+        stdout.flush()?;
 
         Ok(())
     }

@@ -24,7 +24,13 @@ pub(super) fn draw_status_bar(
         Mode::Normal => "-- NORMAL --".to_string(),
         Mode::Insert => "-- INSERT --".to_string(),
         Mode::Explorer => "-- EXPLORER --".to_string(),
-        Mode::Command => format!(":{}", context.command_buffer),
+        Mode::Command => {
+            if context.savedialog {
+                format!("Save as: {}", context.command_buffer)
+            } else {
+                format!(":{}", context.command_buffer)
+            }
+        },
     };
 
     let status = match context.current_message.as_ref() {
