@@ -1,5 +1,12 @@
 use crate::editor::buffer::Buffer;
 
+#[derive(PartialEq)]
+enum CharType {
+    Word,
+    Punctuation,
+    Whitespace,
+}
+
 pub fn move_right(buffer: &mut Buffer) {
     let Some(line) = buffer.lines.get(buffer.column) else {
         return;
@@ -71,58 +78,92 @@ pub fn move_toend(buffer: &mut Buffer) {
 }
 
 pub fn move_tonext(buffer: &mut Buffer) {
-    let line = &buffer.lines[buffer.column];
+    if buffer.column >= buffer.lines.len() {
+        return;
+    }
 
-    while buffer.row < line.len() {
-        let Some(c) = line.chars().nth(buffer.row) else {
-            break;
-        };
+    let line: Vec<char> = buffer.lines[buffer.column].chars().collect();
 
-        if c == ' ' {
-            break;
+    if line.is_empty() || buffer.row >= line.len() {
+        return;
+    }
+
+    let mut pos = buffer.row;
+    let current_type = char_type(line[pos]);
+
+    while pos < line.len() && char_type(line[pos]) == current_type {
+        pos += 1;
+    }
+
+    while pos < line.len() && char_type(line[pos]) == CharType::Whitespace {
+        pos += 1;
+    }
+
+    if pos < line.len() {
+        buffer.row = pos;
+        return;
+    }
+
+    let mut next_column = buffer.column + 1;
+
+    while next_column < buffer.lines.len() {
+        let next_line: Vec<char> = buffer.lines[next_column].chars().collect();
+
+        if let Some(pos) = next_line
+            .iter()
+            .position(|&c| char_type(c) != CharType::Whitespace)
+        {
+            buffer.column = next_column;
+            buffer.row = pos;
+            return;
         }
 
-        buffer.row += 1;
+        next_column += 1;
     }
-    while buffer.row < line.len() {
-        let Some(c) = line.chars().nth(buffer.row) else {
-            break;
-        };
 
-        if c != ' ' {
-            break;
-        }
-
-        buffer.row += 1;
-    }
+    buffer.row = line.len().saturating_sub(1);
 }
 
 pub fn move_toprev(buffer: &mut Buffer) {
-    let line = &buffer.lines[buffer.column];
-
-    while buffer.row > 0 {
-        let Some(c) = line.chars().nth(buffer.row) else {
-            break;
-        };
-
-        if c == ' ' {
-            break;
-        }
-        if buffer.row > 0 {
-            buffer.row -= 1;
-        }
+    if buffer.lines.is_empty() {
+        return;
     }
-    while buffer.row > 0 {
-        let Some(c) = line.chars().nth(buffer.row) else {
-            break;
-        };
 
-        if c == ' ' {
-            if buffer.row > 0 {
-                buffer.row -= 1;
-            }
-        } else {
-            break;
+    if buffer.row == 0 {
+        if buffer.column > 0 {
+            buffer.column -= 1;
+            buffer.row = buffer.lines[buffer.column]
+                .chars()
+                .count()
+                .saturating_sub(1);
         }
+        return;
+    }
+
+    let line: Vec<char> = buffer.lines[buffer.column].chars().collect();
+
+    while buffer.row > 0 && char_type(line[buffer.row - 1]) == CharType::Whitespace {
+        buffer.row -= 1;
+    }
+
+    if buffer.row == 0 {
+        return;
+    }
+
+    buffer.row -= 1;
+    let current_type = char_type(line[buffer.row]);
+
+    while buffer.row > 0 && char_type(line[buffer.row - 1]) == current_type {
+        buffer.row -= 1;
+    }
+}
+
+fn char_type(c: char) -> CharType {
+    if c.is_whitespace() {
+        CharType::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharType::Word
+    } else {
+        CharType::Punctuation
     }
 }

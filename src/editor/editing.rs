@@ -39,11 +39,13 @@ pub fn remove_char(buffer: &mut Buffer) {
             return;
         };
 
-        let index = line
+        let Some(index) = line
             .char_indices()
             .nth(buffer.row - 1)
             .map(|(index, _)| index)
-            .unwrap_or(line.len());
+        else {
+            return
+        };
 
         line.remove(index);
         buffer.row -= 1;
