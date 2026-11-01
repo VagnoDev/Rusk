@@ -1,23 +1,14 @@
 use std::{io::stdout, path::PathBuf, time::Instant};
 
 use crate::{
-    Status::Continue,
-    app::{
+    Status::Continue, app::{
         messages::MessageLevel,
         mode::{Mode, set_command, set_normal},
-    },
-    commands::{executor, parser},
-    editor::{
-        editing::{insert_backward, insert_newline, remove_char},
-        movement::{
-            move_down, move_left, move_right, move_toend, move_tonext, move_toprev, move_tostart,
-            move_up,
+    }, commands::{executor, parser}, editor::{
+        editing::{insert_backward, insert_newline, remove_char}, movement::{
+            move_down, move_left, move_right, move_to_end, move_to_next_word, move_to_start, move_toend, move_tonext, move_toprev, move_tostart, move_up, moveto_prev_word_end,
         },
-    },
-    explorer::tree::{Explorer, read_dir},
-    gui::{display::Display, status_bar::send_message},
-    input::keyboard::{PendingKey, keybinding},
-    io::save::save,
+    }, explorer::tree::{Explorer, read_dir}, gui::{display::Display, status_bar::send_message}, input::keyboard::{PendingKey, keybinding}, io::save::save,
 };
 use crossterm::{
     event::{
@@ -215,9 +206,13 @@ fn manager(
             Action::EndLine => move_toend(lines),
             Action::MoveNext => move_tonext(lines),
             Action::MovePrev => move_toprev(lines),
+            Action::MoveToPrevWordEnd => moveto_prev_word_end(lines),
             Action::SetExplorer => {
                 return Ok(Status::OpenExplorer);
             }
+            Action::MoveToWord => move_to_next_word(lines),
+            Action::MoveToStart => move_to_start(lines),
+            Action::MoveToEnd => move_to_end(lines),
             _ => {}
         },
         Mode::Insert => match first {

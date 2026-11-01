@@ -158,6 +158,128 @@ pub fn move_toprev(buffer: &mut Buffer) {
     }
 }
 
+pub fn move_to_next_word(buffer: &mut Buffer) {
+    if buffer.lines.is_empty() {
+        return;
+    }
+
+    if buffer.column >= buffer.lines.len() {
+        return;
+    }
+
+    let mut col = buffer.column;
+    let mut pos = buffer.row;
+
+    while col < buffer.lines.len() {
+        let line: Vec<char> = buffer.lines[col].chars().collect();
+
+        if line.is_empty() || pos >= line.len() {
+            col += 1;
+            pos = 0;
+            continue;
+        }
+
+        if char_type(line[pos]) == CharType::Word {
+            let mut end = pos;
+
+            while end + 1 < line.len() && char_type(line[end + 1]) == CharType::Word {
+                end += 1;
+            }
+
+            if end > pos {
+                buffer.column = col;
+                buffer.row = end;
+                return;
+            }
+
+            pos += 1;
+        }
+
+        while pos < line.len() && char_type(line[pos]) != CharType::Word {
+            pos += 1;
+        }
+
+        if pos < line.len() {
+            while pos + 1 < line.len() && char_type(line[pos + 1]) == CharType::Word {
+                pos += 1;
+            }
+
+            buffer.column = col;
+            buffer.row = pos;
+            return;
+        }
+
+        col += 1;
+        pos = 0;
+    }
+}
+
+pub fn moveto_prev_word_end(buffer: &mut Buffer) {
+    if buffer.lines.is_empty() || buffer.column >= buffer.lines.len() {
+        return;
+    }
+
+    let original_row = buffer.row;
+    let original_col = buffer.column;
+
+    let mut col = original_col;
+    let mut pos = original_row;
+
+    let current_line: Vec<char> = buffer.lines[col].chars().collect();
+
+    if pos < current_line.len() && char_type(current_line[pos]) == CharType::Word {
+        while pos > 0 && char_type(current_line[pos - 1]) == CharType::Word {
+            pos -= 1;
+        }
+    }
+
+    loop {
+        if pos == 0 {
+            if col == 0 {
+                break;
+            }
+
+            col -= 1;
+
+            let line: Vec<char> = buffer.lines[col].chars().collect();
+            pos = line.len();
+
+            if pos == 0 {
+                continue;
+            }
+        }
+
+        let line: Vec<char> = buffer.lines[col].chars().collect();
+
+        while pos > 0 && char_type(line[pos - 1]) != CharType::Word {
+            pos -= 1;
+        }
+
+        if pos > 0 {
+            buffer.column = col;
+            buffer.row = pos - 1;
+            return;
+        }
+    }
+
+    buffer.column = original_col;
+    buffer.row = original_row;
+}
+
+pub fn move_to_start(buffer: &mut Buffer) {
+    buffer.row = 0;
+    buffer.column = 0;
+}
+
+pub fn move_to_end(buffer: &mut Buffer) {
+    if buffer.lines.is_empty() {
+        return;
+    } else {
+        buffer.row = 0;
+        buffer.column = buffer.lines.len().saturating_sub(1);
+    }
+}
+
 fn char_type(c: char) -> CharType {
     if c.is_whitespace() {
         CharType::Whitespace

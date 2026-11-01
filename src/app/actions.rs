@@ -21,5 +21,9 @@ pub enum Action {
     EndLine,
     MoveNext,
     MovePrev,
+    MoveToWord,
+    MoveToPrevWordEnd,
+    MoveToStart,
+    MoveToEnd,
     Quit,
 }
