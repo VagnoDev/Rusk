@@ -1,0 +1,69 @@
+name: Bug report
+description: Segnala un bug o un errore imprevisto in Rusk
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prima di inviare
+      options:
+        - label: Sto usando l'ultima versione disponibile di Rusk.
+          required: true
+        - label: Ho controllato che questo problema non sia già stato segnalato tra le Issue aperte o chiuse.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Descrizione del problema
+      description: Descrivi in modo chiaro cosa sta succedendo.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Passaggi per riprodurre l'errore
+      description: Indica i passaggi dettagliati per far verificare il bug a chi mantiene il progetto.
+      placeholder: |
+        1. Esegui il comando '...'
+        2. Inserisci il parametro '...'
+        3. Visualizza l'errore
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento atteso
+      description: Cosa ti aspettavi che accadesse?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log / Output di errore
+      description: Incolla qui eventuali terminal log o errori rilevati (usa i blocchi di codice).
+      render: shell
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Sistema Operativo
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Altro
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Versione di Rusk
+      description: Inserisci la versione in uso (es. v1.0.2 o commit hash).
+    validations:
+      required: false
