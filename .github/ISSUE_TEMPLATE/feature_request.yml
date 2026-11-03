@@ -1,37 +1,36 @@
 name: Feature Request
-description: Proponi una nuova funzionalità o un miglioramento per Rusk
-title: "[FEATURE]: "
+description: Suggest a new feature or improvement for Rusk
 labels: ["enhancement"]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: Il problema o l'esigenza
-      description: La tua richiesta è legata a un problema o a una mancanza attuale?
-      placeholder: Es. Attualmente non è possibile esportare i dati in formato JSON...
+      label: Is your feature request related to a problem?
+      description: Clear description of what the problem or limitation is.
+      placeholder: e.g. I'm always frustrated when...
     validations:
       required: true
 
   - type: textarea
     id: solution
     attributes:
-      label: Soluzione proposta
-      description: Descrivi in dettaglio come ti piacerebbe che funzionasse questa nuova caratteristica.
+      label: Proposed solution
+      description: Clear and concise description of what you want to happen.
     validations:
       required: true
 
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternative considerate
-      description: Hai valutato o provato soluzioni alternative per ottenere lo stesso risultato?
+      label: Alternatives considered
+      description: Description of any alternative solutions or features you've considered.
     validations:
       required: false
 
   - type: textarea
     id: additional-context
     attributes:
-      label: Contesto aggiuntivo
-      description: Aggiungi qui qualsiasi altro dettaglio, screenshot, o link utile a chiarire l'idea.
+      label: Additional context
+      description: Add any other context, screenshots, or mockups about the feature request here.
     validations:
       required: false
