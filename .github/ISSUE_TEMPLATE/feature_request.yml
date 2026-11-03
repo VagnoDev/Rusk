@@ -1,0 +1,37 @@
+name: Feature Request
+description: Proponi una nuova funzionalità o un miglioramento per Rusk
+title: "[FEATURE]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Il problema o l'esigenza
+      description: La tua richiesta è legata a un problema o a una mancanza attuale?
+      placeholder: Es. Attualmente non è possibile esportare i dati in formato JSON...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Soluzione proposta
+      description: Descrivi in dettaglio come ti piacerebbe che funzionasse questa nuova caratteristica.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative considerate
+      description: Hai valutato o provato soluzioni alternative per ottenere lo stesso risultato?
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Contesto aggiuntivo
+      description: Aggiungi qui qualsiasi altro dettaglio, screenshot, o link utile a chiarire l'idea.
+    validations:
+      required: false
