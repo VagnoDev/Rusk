@@ -1,6 +1,6 @@
 name: Bug report
 description: Segnala un bug o un errore imprevisto in Rusk
-title: "[BUG]: "
+title: ""
 labels: ["bug"]
 body:
   - type: checkboxes
