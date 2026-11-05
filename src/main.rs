@@ -1,14 +1,23 @@
 use std::{io::stdout, path::PathBuf, time::Instant};
 
 use crate::{
-    Status::Continue, app::{
+    Status::Continue,
+    app::{
         messages::MessageLevel,
         mode::{Mode, set_command, set_normal},
-    }, commands::{executor, parser}, editor::{
-        editing::{insert_backward, insert_newline, remove_char}, movement::{
-            move_down, move_left, move_right, move_to_end, move_to_next_word, move_to_start, move_toend, move_tonext, move_toprev, move_tostart, move_up, moveto_prev_word_end,
+    },
+    commands::{executor, parser},
+    editor::{
+        editing::{insert_backward, insert_newline, remove_char},
+        movement::{
+            move_down, move_left, move_right, move_to_end, move_to_next_word, move_to_start,
+            move_toend, move_tonext, move_toprev, move_tostart, move_up, moveto_prev_word_end,
         },
-    }, explorer::tree::{Explorer, read_dir}, gui::{display::Display, status_bar::send_message}, input::keyboard::{PendingKey, keybinding}, io::save::save,
+    },
+    explorer::tree::{Explorer, read_dir},
+    gui::{display::Display, editor_view::update_viewport, status_bar::send_message},
+    input::keyboard::{PendingKey, keybinding},
+    io::save::save,
 };
 use crossterm::{
     event::{
@@ -42,9 +51,15 @@ mod input;
 mod io;
 
 pub struct App {
-    editor: buffer::Buffer,
+    buffers: Vec<OpenBuffer>,
     explorer: Explorer,
     sidebar_visible: bool,
+    active_buffer: usize,
+}
+
+pub struct OpenBuffer {
+    pub path: Option<PathBuf>,
+    pub buffer: Buffer,
 }
 
 pub enum Status {
@@ -60,13 +75,18 @@ fn main() -> std::io::Result<()> {
     let mut app = match &path {
         Some(path) => match Path::new(&path).is_dir() {
             true => App {
-                editor: Buffer {
-                    lines: vec![String::new()],
-                    row: 0,
-                    column: 0,
-                },
+                buffers: vec![OpenBuffer {
+                    path: None,
+                    buffer: Buffer {
+                        lines: vec![String::new()],
+                        row: 0,
+                        column: 0,
+                        modified: false,
+                    },
+                }],
                 explorer: read_dir(&PathBuf::from(&path), 0),
                 sidebar_visible: false,
+                active_buffer: 0,
             },
             false => {
                 let file_path = Path::new(&path);
@@ -77,30 +97,40 @@ fn main() -> std::io::Result<()> {
                     .unwrap_or(Path::new("."));
 
                 App {
-                    editor: buffer::fetch(&path)?,
+                    buffers: vec![OpenBuffer {
+                        path: Some(file_path.to_path_buf()),
+                        buffer: buffer::fetch(&path)?,
+                    }],
                     explorer: read_dir(&PathBuf::from(parent), 0),
                     sidebar_visible: false,
+                    active_buffer: 0,
                 }
             }
         },
         None => App {
-            editor: Buffer {
-                lines: vec![String::new()],
-                row: 0,
-                column: 0,
-            },
+            buffers: vec![OpenBuffer {
+                path: None,
+                buffer: Buffer {
+                    lines: vec![String::new()],
+                    row: 0,
+                    column: 0,
+                    modified: false,
+                },
+            }],
             explorer: read_dir(&PathBuf::from("."), 0),
             sidebar_visible: false,
+            active_buffer: 0,
         },
     };
 
     let mut context = EditorContext {
         mode: Mode::Normal,
         command_buffer: String::new(),
-        file_path: path.map(PathBuf::from),
+        file_path: app.buffers[app.active_buffer].path.clone(),
         current_message: None,
         savedialog: false,
         quit_after_save: false,
+        viewport_top: 0,
     };
 
     terminal::enable_raw_mode()?;
@@ -117,10 +147,11 @@ fn main() -> std::io::Result<()> {
     let mut pending_key = PendingKey::None;
 
     display.draw(
-        &mut app.editor,
+        &app.buffers[app.active_buffer].buffer,
         &context,
         &app.explorer,
         app.sidebar_visible,
+        &app.buffers
     )?;
 
     let mut needs_redraw = true;
@@ -151,7 +182,14 @@ fn main() -> std::io::Result<()> {
                 needs_redraw = true;
             }
         }
-        let status = manager(&mut queue, &mut app.editor, &mut context, &mut app.explorer)?;
+        let status = manager(
+            &mut queue,
+            &mut app.buffers,
+            &mut app.active_buffer,
+            &mut context,
+            &mut app.explorer,
+            (display.height.saturating_sub(1)) as usize,
+        )?;
 
         match status {
             Status::Continue => {}
@@ -167,10 +205,11 @@ fn main() -> std::io::Result<()> {
         }
         if needs_redraw {
             display.draw(
-                &mut app.editor,
+                &app.buffers[app.active_buffer].buffer,
                 &context,
                 &app.explorer,
                 app.sidebar_visible,
+                &app.buffers
             )?;
 
             needs_redraw = false;
@@ -183,107 +222,133 @@ fn main() -> std::io::Result<()> {
 
 fn manager(
     queue: &mut VecDeque<Action>,
-    lines: &mut Buffer,
+    buffers: &mut Vec<OpenBuffer>,
+    active_buffer: &mut usize,
     context: &mut EditorContext,
     explorer: &mut Explorer,
+    editor_height: usize,
 ) -> std::io::Result<Status> {
     let Some(first) = queue.pop_front() else {
         return Ok(Continue);
     };
+
     match context.mode {
-        Mode::Normal => match first {
-            Action::MoveLeft => move_left(lines),
-            Action::MoveRight => move_right(lines),
-            Action::MoveUp => move_up(lines),
-            Action::MoveDown => move_down(lines),
-            Action::InsertForward => insert_forward(lines, context),
-            Action::InserBackward => insert_backward(lines, context),
-            Action::SetCommand => {
-                context.current_message = None;
-                set_command(context);
+        Mode::Normal => {
+            let lines = &mut buffers[*active_buffer].buffer;
+            match first {
+                Action::MoveLeft => move_left(lines),
+                Action::MoveRight => move_right(lines),
+                Action::MoveUp => move_up(lines),
+                Action::MoveDown => move_down(lines),
+                Action::InsertForward => insert_forward(lines, context),
+                Action::InserBackward => insert_backward(lines, context),
+                Action::SetCommand => {
+                    context.current_message = None;
+                    set_command(context);
+                }
+                Action::StartLine => move_tostart(lines),
+                Action::EndLine => move_toend(lines),
+                Action::MoveNext => move_tonext(lines),
+                Action::MovePrev => move_toprev(lines),
+                Action::MoveToPrevWordEnd => moveto_prev_word_end(lines),
+                Action::SetExplorer => {
+                    return Ok(Status::OpenExplorer);
+                }
+                Action::MoveToWord => move_to_next_word(lines),
+                Action::MoveToStart => move_to_start(lines),
+                Action::MoveToEnd => move_to_end(lines),
+                _ => {}
             }
-            Action::StartLine => move_tostart(lines),
-            Action::EndLine => move_toend(lines),
-            Action::MoveNext => move_tonext(lines),
-            Action::MovePrev => move_toprev(lines),
-            Action::MoveToPrevWordEnd => moveto_prev_word_end(lines),
-            Action::SetExplorer => {
-                return Ok(Status::OpenExplorer);
+        }
+        Mode::Insert => {
+            let lines = &mut buffers[*active_buffer].buffer;
+            match first {
+                Action::InsertChar(char) => insert_char(char, lines),
+                Action::SetNormal => set_normal(context),
+                Action::RemoveChar => remove_char(lines),
+                Action::InserNewLine => insert_newline(lines),
+                _ => {}
             }
-            Action::MoveToWord => move_to_next_word(lines),
-            Action::MoveToStart => move_to_start(lines),
-            Action::MoveToEnd => move_to_end(lines),
-            _ => {}
-        },
-        Mode::Insert => match first {
-            Action::InsertChar(char) => insert_char(char, lines),
-            Action::SetNormal => set_normal(context),
-            Action::RemoveChar => remove_char(lines),
-            Action::InserNewLine => insert_newline(lines),
-            _ => {}
-        },
-        Mode::Command => match first {
-            Action::EscCommand => set_normal(context),
-            Action::InsertChar(char) => context.command_buffer.push(char),
-            Action::RemoveChar => {
-                context.command_buffer.pop();
-            }
-            Action::SendCommand => {
-                if context.savedialog {
-                    let path = std::path::Path::new(&context.command_buffer);
+        }
+        Mode::Command => {
+            let lines = &mut buffers[*active_buffer].buffer;
+            match first {
+                Action::EscCommand => set_normal(context),
+                Action::InsertChar(char) => context.command_buffer.push(char),
+                Action::RemoveChar => {
+                    context.command_buffer.pop();
+                }
+                Action::SendCommand => {
+                    if context.savedialog {
+                        let path = std::path::Path::new(&context.command_buffer);
 
-                    match save(lines, path) {
-                        Ok(()) => {
-                            context.file_path = Some(path.to_path_buf());
-                            context.command_buffer.clear();
-                            context.savedialog = false;
-                            set_normal(context);
+                        match save(lines, path) {
+                            Ok(()) => {
+                                context.file_path = Some(path.to_path_buf());
+                                buffers[*active_buffer].path = Some(path.to_path_buf());
+                                context.command_buffer.clear();
+                                context.savedialog = false;
+                                set_normal(context);
 
-                            if context.quit_after_save {
-                                context.quit_after_save = false;
-                                return Ok(Status::Quit);
+                                if context.quit_after_save {
+                                    context.quit_after_save = false;
+                                    return Ok(Status::Quit);
+                                }
+                                send_message(
+                                    context,
+                                    "File Saved.".to_string(),
+                                    MessageLevel::Success,
+                                );
+                                return Ok(Status::Continue);
                             }
-
-                            send_message(context, "File Saved.".to_string(), MessageLevel::Success);
-                            return Ok(Status::Continue);
-                        }
-                        Err(error) => {
-                            send_message(
-                                context,
-                                format!("Cannot save file: {error}"),
-                                MessageLevel::Error,
-                            );
-                            return Ok(Status::Continue);
+                            Err(error) => {
+                                send_message(
+                                    context,
+                                    format!("Cannot save file: {error}"),
+                                    MessageLevel::Error,
+                                );
+                                return Ok(Status::Continue);
+                            }
                         }
                     }
+
+                    let command = parser::parse(context.command_buffer.as_str());
+                    let needs_filename = matches!(
+                        &command,
+                        parser::Command::Write(None) | parser::Command::WriteQuit(None)
+                    );
+
+                    if needs_filename && context.file_path.is_none() {
+                        context.quit_after_save =
+                            matches!(&command, parser::Command::WriteQuit(None));
+
+                        context.savedialog = true;
+                        context.command_buffer.clear();
+                        return Ok(Status::Continue);
+                    }
+
+                    let is_write = matches!(&command, parser::Command::Write(_));
+                    let is_saving = matches!(
+                        &command,
+                        parser::Command::Write(_) | parser::Command::WriteQuit(_)
+                    );
+                    let status = executor::execute(command, lines, &mut context.file_path)?;
+
+                    if is_saving {
+                        buffers[*active_buffer].path = context.file_path.clone();
+                    }
+
+                    if is_write {
+                        set_normal(context);
+                        send_message(context, "File Saved.".to_string(), MessageLevel::Success);
+                        buffers[*active_buffer].path = context.file_path.clone();
+                    }
+
+                    return Ok(status);
                 }
-
-                let command = parser::parse(context.command_buffer.as_str());
-                let needs_filename = matches!(
-                    &command,
-                    parser::Command::Write(None) | parser::Command::WriteQuit(None)
-                );
-
-                if needs_filename && context.file_path.is_none() {
-                    context.quit_after_save = matches!(&command, parser::Command::WriteQuit(None));
-
-                    context.savedialog = true;
-                    context.command_buffer.clear();
-                    return Ok(Status::Continue);
-                }
-
-                let is_write = matches!(&command, parser::Command::Write(_));
-                let status = executor::execute(command, lines, &context.file_path)?;
-
-                if is_write {
-                    set_normal(context);
-                    send_message(context, "File Saved.".to_string(), MessageLevel::Success);
-                }
-
-                return Ok(status);
+                _ => {}
             }
-            _ => {}
-        },
+        }
         Mode::Explorer => match first {
             Action::SetNormal => {
                 set_normal(context);
@@ -297,23 +362,42 @@ fn manager(
                 } else {
                     let path = explorer.entries[explorer.selected].path.clone();
 
-                    match buffer::fetch(path.to_string_lossy().as_ref()) {
-                        Ok(buffer) => {
-                            *lines = buffer;
-                            context.file_path = Some(path);
+                    let existing = buffers
+                        .iter()
+                        .position(|open_buffer| open_buffer.path.as_ref() == Some(&path));
+
+                    let opened = match existing {
+                        Some(index) => {
+                            *active_buffer = index;
+                            true
                         }
-                        Err(error) => {
-                            send_message(
-                                context,
-                                format!("Cannot open file: {error}"),
-                                MessageLevel::Error,
-                            );
-                        }
+                        None => match buffer::fetch(path.to_string_lossy().as_ref()) {
+                            Ok(buffer) => {
+                                buffers.push(OpenBuffer {
+                                    path: Some(path.clone()),
+                                    buffer,
+                                });
+                                *active_buffer = buffers.len() - 1;
+                                true
+                            }
+                            Err(error) => {
+                                send_message(
+                                    context,
+                                    format!("Cannot open file: {error}"),
+                                    MessageLevel::Error,
+                                );
+                                false
+                            }
+                        },
+                    };
+                    if opened {
+                        context.file_path = Some(path.clone());
                     }
                 }
             }
             _ => {}
         },
     }
+    update_viewport(&mut buffers[*active_buffer].buffer, context, editor_height);
     Ok(Continue)
 }

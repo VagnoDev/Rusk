@@ -1,20 +1,14 @@
 use std::{
     io::stdout,
-    path::{self, Path, PathBuf},
+    path::{PathBuf},
 };
 
 use crossterm::{
     execute,
-    terminal::{self, LeaveAlternateScreen},
 };
 
 use crate::{Buffer, Status};
 use crate::{
-    app::{
-        context::{self, EditorContext},
-        messages::MessageLevel,
-    },
-    gui::status_bar::send_message,
     io::save::save,
 };
 
@@ -22,8 +16,8 @@ use super::parser::Command;
 
 pub fn execute(
     command: Command,
-    buffer: &Buffer,
-    path: &Option<PathBuf>,
+    buffer: &mut Buffer,
+    path: &mut Option<PathBuf>,
 ) -> std::io::Result<Status> {
     match command {
         Command::Quit => Ok(Status::Quit),

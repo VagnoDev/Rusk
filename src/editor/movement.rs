@@ -8,11 +8,7 @@ enum CharType {
 }
 
 pub fn move_right(buffer: &mut Buffer) {
-    let Some(line) = buffer.lines.get(buffer.column) else {
-        return;
-    };
-
-    let len = line.chars().count();
+    let len = buffer.char_count(buffer.column).unwrap_or(0);
 
     if len == 0 || buffer.row >= len - 1 {
         return;
@@ -30,7 +26,7 @@ pub fn move_left(lines: &mut Buffer) {
 }
 
 pub fn move_down(lines: &mut Buffer) {
-    let len = lines.lines.len();
+    let len = lines.line_count();
 
     if len == 0 || lines.column >= len - 1 {
         return;
@@ -38,7 +34,7 @@ pub fn move_down(lines: &mut Buffer) {
 
     lines.column += 1;
 
-    let line_len = lines.lines[lines.column].chars().count();
+    let line_len = lines.char_count(lines.column).unwrap_or(0);
 
     if line_len == 0 {
         lines.row = 0;
@@ -54,7 +50,7 @@ pub fn move_up(lines: &mut Buffer) {
 
     lines.column -= 1;
 
-    let line_len = lines.lines[lines.column].chars().count();
+    let line_len = lines.char_count(lines.column).unwrap_or(0);
 
     if line_len == 0 {
         lines.row = 0;
@@ -68,7 +64,7 @@ pub fn move_tostart(buffer: &mut Buffer) {
 }
 
 pub fn move_toend(buffer: &mut Buffer) {
-    let line_len = buffer.lines[buffer.column].chars().count();
+    let line_len = buffer.char_count(buffer.column).unwrap_or(0);
 
     if line_len == 0 {
         return;
@@ -78,11 +74,14 @@ pub fn move_toend(buffer: &mut Buffer) {
 }
 
 pub fn move_tonext(buffer: &mut Buffer) {
-    if buffer.column >= buffer.lines.len() {
+    if buffer.column >= buffer.line_count() {
         return;
     }
 
-    let line: Vec<char> = buffer.lines[buffer.column].chars().collect();
+    let Some(current_line) = buffer.line(buffer.column) else {
+        return;
+    };
+    let line: Vec<char> = current_line.chars().collect();
 
     if line.is_empty() || buffer.row >= line.len() {
         return;
@@ -106,8 +105,11 @@ pub fn move_tonext(buffer: &mut Buffer) {
 
     let mut next_column = buffer.column + 1;
 
-    while next_column < buffer.lines.len() {
-        let next_line: Vec<char> = buffer.lines[next_column].chars().collect();
+    while next_column < buffer.line_count() {
+        let Some(next_str) = buffer.line(next_column) else {
+            break;
+        };
+        let next_line: Vec<char> = next_str.chars().collect();
 
         if let Some(pos) = next_line
             .iter()
@@ -125,22 +127,25 @@ pub fn move_tonext(buffer: &mut Buffer) {
 }
 
 pub fn move_toprev(buffer: &mut Buffer) {
-    if buffer.lines.is_empty() {
+    if buffer.line_count() == 0 {
         return;
     }
 
     if buffer.row == 0 {
         if buffer.column > 0 {
             buffer.column -= 1;
-            buffer.row = buffer.lines[buffer.column]
-                .chars()
-                .count()
+            buffer.row = buffer
+                .char_count(buffer.column)
+                .unwrap_or(0)
                 .saturating_sub(1);
         }
         return;
     }
 
-    let line: Vec<char> = buffer.lines[buffer.column].chars().collect();
+    let Some(current_line) = buffer.line(buffer.column) else {
+        return;
+    };
+    let line: Vec<char> = current_line.chars().collect();
 
     while buffer.row > 0 && char_type(line[buffer.row - 1]) == CharType::Whitespace {
         buffer.row -= 1;
@@ -159,19 +164,22 @@ pub fn move_toprev(buffer: &mut Buffer) {
 }
 
 pub fn move_to_next_word(buffer: &mut Buffer) {
-    if buffer.lines.is_empty() {
+    if buffer.line_count() == 0 {
         return;
     }
 
-    if buffer.column >= buffer.lines.len() {
+    if buffer.column >= buffer.line_count() {
         return;
     }
 
     let mut col = buffer.column;
     let mut pos = buffer.row;
 
-    while col < buffer.lines.len() {
-        let line: Vec<char> = buffer.lines[col].chars().collect();
+    while col < buffer.line_count() {
+        let Some(current_line) = buffer.line(col) else {
+            break;
+        };
+        let line: Vec<char> = current_line.chars().collect();
 
         if line.is_empty() || pos >= line.len() {
             col += 1;
@@ -215,7 +223,7 @@ pub fn move_to_next_word(buffer: &mut Buffer) {
 }
 
 pub fn moveto_prev_word_end(buffer: &mut Buffer) {
-    if buffer.lines.is_empty() || buffer.column >= buffer.lines.len() {
+    if buffer.line_count() == 0 || buffer.column >= buffer.line_count() {
         return;
     }
 
@@ -225,7 +233,9 @@ pub fn moveto_prev_word_end(buffer: &mut Buffer) {
     let mut col = original_col;
     let mut pos = original_row;
 
-    let current_line: Vec<char> = buffer.lines[col].chars().collect();
+    let current_line: Vec<char> = buffer
+        .line(col)
+        .map_or_else(Vec::new, |l| l.chars().collect());
 
     if pos < current_line.len() && char_type(current_line[pos]) == CharType::Word {
         while pos > 0 && char_type(current_line[pos - 1]) == CharType::Word {
@@ -241,7 +251,9 @@ pub fn moveto_prev_word_end(buffer: &mut Buffer) {
 
             col -= 1;
 
-            let line: Vec<char> = buffer.lines[col].chars().collect();
+            let line: Vec<char> = buffer
+                .line(col)
+                .map_or_else(Vec::new, |l| l.chars().collect());
             pos = line.len();
 
             if pos == 0 {
@@ -249,7 +261,9 @@ pub fn moveto_prev_word_end(buffer: &mut Buffer) {
             }
         }
 
-        let line: Vec<char> = buffer.lines[col].chars().collect();
+        let line: Vec<char> = buffer
+            .line(col)
+            .map_or_else(Vec::new, |l| l.chars().collect());
 
         while pos > 0 && char_type(line[pos - 1]) != CharType::Word {
             pos -= 1;
@@ -272,11 +286,11 @@ pub fn move_to_start(buffer: &mut Buffer) {
 }
 
 pub fn move_to_end(buffer: &mut Buffer) {
-    if buffer.lines.is_empty() {
+    if buffer.line_count() == 0 {
         return;
     } else {
         buffer.row = 0;
-        buffer.column = buffer.lines.len().saturating_sub(1);
+        buffer.column = buffer.line_count().saturating_sub(1);
     }
 }
 

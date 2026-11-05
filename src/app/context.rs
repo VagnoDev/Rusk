@@ -9,5 +9,6 @@ pub struct EditorContext {
     pub file_path: Option<PathBuf>,
     pub current_message: Option<Message>,
     pub savedialog: bool,
-    pub quit_after_save: bool
+    pub quit_after_save: bool,
+    pub viewport_top: usize
 }
