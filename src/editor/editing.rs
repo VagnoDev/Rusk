@@ -3,20 +3,17 @@ use crate::app::mode::Mode;
 use crate::editor::buffer::Buffer;
 
 pub fn insert_char(c: char, buffer: &mut Buffer) {
-    let Some(line) = buffer.lines.get_mut(buffer.column) else {
+    let modified = buffer.insert_char_at(buffer.row, buffer.column, c);
+    if modified {
+        buffer.row += 1;
+        buffer.mark_modified();
+    } else {
         return;
-    };
-    let byte_index = line
-        .char_indices()
-        .nth(buffer.row)
-        .map(|(index, _)| index)
-        .unwrap_or(line.len());
-    line.insert(byte_index, c);
-    buffer.row += 1;
+    }
 }
 
 pub fn insert_forward(buffer: &mut Buffer, context: &mut EditorContext) {
-    let line_len = buffer.lines[buffer.column].chars().count();
+    let line_len = buffer.char_count(buffer.column).unwrap_or(0);
 
     if line_len > 0 && buffer.row < line_len {
         buffer.row += 1;
@@ -35,26 +32,23 @@ pub fn insert_backward(buffer: &mut Buffer, context: &mut EditorContext) {
 
 pub fn remove_char(buffer: &mut Buffer) {
     if buffer.row > 0 {
-        let Some(line) = buffer.lines.get_mut(buffer.column) else {
+        let modified = buffer.remove_char_at(buffer.row - 1, buffer.column);
+        if modified.is_some() {
+            buffer.row -= 1;
+            buffer.mark_modified();
+        } else {
+            return;
+        }
+    } else if buffer.column > 0 {
+        let Some(current_line) = buffer.line(buffer.column) else {
             return;
         };
-
-        let Some(index) = line
-            .char_indices()
-            .nth(buffer.row - 1)
-            .map(|(index, _)| index)
-        else {
-            return
-        };
-
-        line.remove(index);
-        buffer.row -= 1;
-    } else if buffer.column > 0 {
-        let current_line = buffer.lines[buffer.column].clone();
-        let previous_len = buffer.lines[buffer.column - 1].chars().count();
+        let current_line = current_line.to_string();
+        
+        let previous_len = buffer.char_count(buffer.column - 1).unwrap_or(0);
 
         {
-            let Some(previous) = buffer.lines.get_mut(buffer.column - 1) else {
+            let Some(previous) = buffer.line_mut(buffer.column - 1) else {
                 return;
             };
 
@@ -64,18 +58,20 @@ pub fn remove_char(buffer: &mut Buffer) {
         buffer.lines.remove(buffer.column);
         buffer.column -= 1;
         buffer.row = previous_len;
+        buffer.mark_modified();
     }
 }
 
 pub fn insert_newline(buffer: &mut Buffer) {
+    let row = buffer.row;
     let rest = {
-        let Some(line) = buffer.lines.get_mut(buffer.column) else {
+        let Some(line) = buffer.line_mut(buffer.column) else {
             return;
         };
 
         let index = line
             .char_indices()
-            .nth(buffer.row)
+            .nth(row)
             .map(|(index, _)| index)
             .unwrap_or(line.len());
 
@@ -85,4 +81,5 @@ pub fn insert_newline(buffer: &mut Buffer) {
     buffer.lines.insert(buffer.column + 1, rest);
     buffer.column += 1;
     buffer.row = 0;
+    buffer.mark_modified();
 }

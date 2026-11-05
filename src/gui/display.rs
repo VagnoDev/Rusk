@@ -1,5 +1,5 @@
 use crate::{
-    app::context::EditorContext, app::mode::Mode, editor::buffer::Buffer, explorer::tree::Explorer,
+    OpenBuffer, app::{context::EditorContext, mode::Mode}, editor::buffer::Buffer, explorer::tree::Explorer
 };
 
 use crossterm::{
@@ -22,6 +22,7 @@ pub(super) enum Colors {
     GREEN,
     BLUE,
     CYAN,
+    YELLOW
 }
 
 pub(super) struct Cell {
@@ -33,7 +34,7 @@ pub(super) struct Cell {
 pub struct Display {
     pub(super) cells: Vec<Cell>,
     pub(super) width: u32,
-    pub(super) height: u32,
+    pub height: u32,
 }
 
 pub(super) fn terminal_to_color(color: &Colors) -> Color {
@@ -44,6 +45,7 @@ pub(super) fn terminal_to_color(color: &Colors) -> Color {
         Colors::GREEN => Color::Green,
         Colors::BLUE => Color::Blue,
         Colors::CYAN => Color::Cyan,
+        Colors::YELLOW => Color::Yellow
     }
 }
 
@@ -78,6 +80,7 @@ impl Display {
         context: &EditorContext,
         explorer: &Explorer,
         sidebar_visible: bool,
+        buffers: &[OpenBuffer]
     ) -> std::io::Result<()> {
         let mut stdout = stdout();
 
@@ -89,10 +92,10 @@ impl Display {
 
         let editor_offset = if sidebar_visible { 26 } else { 0 };
 
-        editor_view::draw_editor(self, buffer, editor_offset);
+        editor_view::draw_editor(self, buffer, editor_offset, context);
 
         if sidebar_visible {
-            explorer_view::draw_explorer(self, explorer);
+            explorer_view::draw_explorer(self, explorer, context, buffers);
         }
 
         status_bar::draw_status_bar(self, context);
@@ -135,7 +138,10 @@ impl Display {
             _ => {
                 queue!(
                     stdout,
-                    MoveTo(buffer.row as u16, buffer.column as u16),
+                    MoveTo(
+                        (editor_offset + buffer.row) as u16,
+                        buffer.column.saturating_sub(context.viewport_top) as u16,
+                    ),
                     Show
                 )?;
             }
