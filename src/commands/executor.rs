@@ -1,16 +1,9 @@
-use std::{
-    io::stdout,
-    path::{PathBuf},
-};
+use std::{io::stdout, path::PathBuf};
 
-use crossterm::{
-    execute,
-};
+use crossterm::execute;
 
+use crate::io::save::save;
 use crate::{Buffer, Status};
-use crate::{
-    io::save::save,
-};
 
 use super::parser::Command;
 
@@ -44,7 +37,7 @@ pub fn execute(
                     }
                 }
             }
-        
+
             Ok(Status::Quit)
         }
 

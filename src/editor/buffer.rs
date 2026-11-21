@@ -1,7 +1,5 @@
 use std::{fs::read_to_string, io::ErrorKind};
 
-use crate::editor::buffer;
-
 #[derive(Debug)]
 pub struct Buffer {
     pub lines: Vec<String>,
@@ -56,45 +54,36 @@ impl Buffer {
     }
 
     pub fn char_at(&self, row: usize, column: usize) -> Option<char> {
-        let Some(line) = self.line(column) else {
-            return None;
-        };
-
-        line.chars().nth(row)
+        let line = self.line(row)?;
+        line.chars().nth(column)
     }
 
     pub fn insert_char_at(&mut self, row: usize, column: usize, c: char) -> bool {
         let Some(line) = self.line_mut(column) else {
             return false;
         };
+
         let byte_index = line
             .char_indices()
             .nth(row)
             .map(|(index, _)| index)
             .unwrap_or(line.len());
-        line.insert(byte_index, c);
 
+        line.insert(byte_index, c);
         true
     }
 
-    pub fn char_count(&self, row: usize) -> Option<usize> {
-        let Some(line) = self.line(row) else {
-            return None;
-        };
-
-        return Some(line.chars().count());
-    }
-
     pub fn remove_char_at(&mut self, row: usize, column: usize) -> Option<char> {
-        let Some(line) = self.line_mut(column) else {
-            return None;
-        };
+        let line = self.line_mut(column)?;
 
-        let Some(index) = line.char_indices().nth(row).map(|(index, _)| index) else {
-            return None;
-        };
+        let index = line.char_indices().nth(row).map(|(index, _)| index)?;
 
         Some(line.remove(index))
+    }
+
+    pub fn char_count(&self, row: usize) -> Option<usize> {
+        let line = self.line(row)?;
+        Some(line.chars().count())
     }
 
     pub fn mark_modified(&mut self) {

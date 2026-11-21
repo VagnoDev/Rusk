@@ -1,13 +1,8 @@
-use crate::{app::context::EditorContext, OpenBuffer, explorer::tree::Explorer};
+use crate::{OpenBuffer, explorer::tree::Explorer};
 
 use super::display::{Colors, Display};
 
-pub(super) fn draw_explorer(
-    display: &mut Display,
-    explorer: &Explorer,
-    context: &EditorContext,
-    buffers: &[OpenBuffer],
-) {
+pub(super) fn draw_explorer(display: &mut Display, explorer: &Explorer, buffers: &[OpenBuffer]) {
     let width = display.width as usize;
     let height = display.height as usize;
     let sidebar_width = 25;
@@ -18,8 +13,7 @@ pub(super) fn draw_explorer(
         }
 
         let is_modified = buffers.iter().any(|open_buffer| {
-            open_buffer.path.as_ref() == Some(&entry.path)
-                && open_buffer.buffer.modified
+            open_buffer.path.as_ref() == Some(&entry.path) && open_buffer.buffer.modified
         });
 
         for x in 0..sidebar_width {
@@ -34,15 +28,15 @@ pub(super) fn draw_explorer(
                 cell.symbol = ch;
 
                 if is_modified {
-                    cell.fg = Colors::YELLOW
+                    cell.fg = Colors::Yellow
                 } else {
-                    cell.fg = Colors::WHITE;
+                    cell.fg = Colors::White;
                 }
 
                 if y == explorer.selected {
-                    cell.bg = Colors::BLUE;
+                    cell.bg = Colors::Blue;
                 } else {
-                    cell.bg = Colors::BLACK;
+                    cell.bg = Colors::Black;
                 }
             }
         }
@@ -56,7 +50,7 @@ pub(super) fn draw_explorer(
 
             if let Some(cell) = display.cells.get_mut(cell_index) {
                 cell.symbol = '|';
-                cell.fg = Colors::WHITE;
+                cell.fg = Colors::White;
             }
         }
     }

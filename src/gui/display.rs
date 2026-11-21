@@ -1,5 +1,8 @@
 use crate::{
-    OpenBuffer, app::{context::EditorContext, mode::Mode}, editor::buffer::Buffer, explorer::tree::Explorer
+    OpenBuffer,
+    app::{context::EditorContext, mode::Mode},
+    editor::buffer::Buffer,
+    explorer::tree::Explorer,
 };
 
 use crossterm::{
@@ -16,13 +19,12 @@ use super::{editor_view, explorer_view, status_bar};
 #[derive(Default)]
 pub(super) enum Colors {
     #[default]
-    BLACK,
-    WHITE,
-    RED,
-    GREEN,
-    BLUE,
-    CYAN,
-    YELLOW
+    Black,
+    White,
+    Red,
+    Blue,
+    Yellow,
+    Reset,
 }
 
 pub(super) struct Cell {
@@ -39,13 +41,12 @@ pub struct Display {
 
 pub(super) fn terminal_to_color(color: &Colors) -> Color {
     match color {
-        Colors::BLACK => Color::Black,
-        Colors::WHITE => Color::White,
-        Colors::RED => Color::Red,
-        Colors::GREEN => Color::Green,
-        Colors::BLUE => Color::Blue,
-        Colors::CYAN => Color::Cyan,
-        Colors::YELLOW => Color::Yellow
+        Colors::Black => Color::Black,
+        Colors::White => Color::White,
+        Colors::Red => Color::Red,
+        Colors::Blue => Color::Blue,
+        Colors::Yellow => Color::Yellow,
+        Colors::Reset => Color::Reset,
     }
 }
 
@@ -53,8 +54,8 @@ impl Default for Cell {
     fn default() -> Self {
         Self {
             symbol: ' ',
-            fg: Colors::WHITE,
-            bg: Colors::BLACK,
+            fg: Colors::White,
+            bg: Colors::Reset,
         }
     }
 }
@@ -80,7 +81,7 @@ impl Display {
         context: &EditorContext,
         explorer: &Explorer,
         sidebar_visible: bool,
-        buffers: &[OpenBuffer]
+        buffers: &[OpenBuffer],
     ) -> std::io::Result<()> {
         let mut stdout = stdout();
 
@@ -95,10 +96,10 @@ impl Display {
         editor_view::draw_editor(self, buffer, editor_offset, context);
 
         if sidebar_visible {
-            explorer_view::draw_explorer(self, explorer, context, buffers);
+            explorer_view::draw_explorer(self, explorer, buffers);
         }
 
-        status_bar::draw_status_bar(self, context);
+        status_bar::draw_status_bar(self, context, buffer);
 
         let width = self.width as usize;
 
