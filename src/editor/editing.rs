@@ -44,7 +44,7 @@ pub fn remove_char(buffer: &mut Buffer) {
             return;
         };
         let current_line = current_line.to_string();
-        
+
         let previous_len = buffer.char_count(buffer.column - 1).unwrap_or(0);
 
         {

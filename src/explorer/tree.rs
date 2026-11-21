@@ -28,13 +28,12 @@ pub fn read_dir(path: &PathBuf, depth: usize) -> Explorer {
         let file_type = entry.file_type().unwrap();
 
         let entry = Entry {
-                name: name,
-                path: path,
-                is_dir: file_type.is_dir(),
-                expanded: false,
-                depth: depth
+            name: name,
+            path: path,
+            is_dir: file_type.is_dir(),
+            expanded: false,
+            depth: depth,
         };
-
 
         vec.push(entry);
     }

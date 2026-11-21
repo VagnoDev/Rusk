@@ -1,11 +1,11 @@
-use crate::explorer::tree::{read_dir, Explorer};
+use crate::explorer::tree::{Explorer, read_dir};
 
 impl Explorer {
     pub fn explorer_down(&mut self) {
         if self.entries.is_empty() {
             return;
         }
-        
+
         if self.selected < self.entries.len() - 1 {
             self.selected += 1;
         }
@@ -26,16 +26,19 @@ impl Explorer {
             let depth = self.entries[self.selected].depth;
 
             let dir = read_dir(&path, depth + 1);
-            self.entries.splice(self.selected + 1..self.selected + 1, dir.entries.into_iter());
+            self.entries.splice(
+                self.selected + 1..self.selected + 1,
+                dir.entries.into_iter(),
+            );
             self.entries[self.selected].expanded = true;
-        } else if self.entries[self.selected].is_dir && self.entries[self.selected].expanded{
+        } else if self.entries[self.selected].is_dir && self.entries[self.selected].expanded {
             let depth = self.entries[self.selected].depth;
             let mut end = self.selected + 1;
-            
+
             while end < self.entries.len() && self.entries[end].depth > depth {
                 end += 1;
             }
-            
+
             self.entries.splice(self.selected + 1..end, []);
             self.entries[self.selected].expanded = false;
         }

@@ -8,6 +8,6 @@ pub fn save(buffer: &mut Buffer, path: &Path) -> std::io::Result<()> {
     write(path, content)?;
 
     buffer.mark_saved();
-    
+
     Ok(())
 }

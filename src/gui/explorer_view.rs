@@ -1,13 +1,8 @@
-use crate::{app::context::EditorContext, OpenBuffer, explorer::tree::Explorer};
+use crate::{OpenBuffer, app::context::EditorContext, explorer::tree::Explorer};
 
 use super::display::{Colors, Display};
 
-pub(super) fn draw_explorer(
-    display: &mut Display,
-    explorer: &Explorer,
-    context: &EditorContext,
-    buffers: &[OpenBuffer],
-) {
+pub(super) fn draw_explorer(display: &mut Display, explorer: &Explorer, buffers: &[OpenBuffer]) {
     let width = display.width as usize;
     let height = display.height as usize;
     let sidebar_width = 25;
@@ -18,8 +13,7 @@ pub(super) fn draw_explorer(
         }
 
         let is_modified = buffers.iter().any(|open_buffer| {
-            open_buffer.path.as_ref() == Some(&entry.path)
-                && open_buffer.buffer.modified
+            open_buffer.path.as_ref() == Some(&entry.path) && open_buffer.buffer.modified
         });
 
         for x in 0..sidebar_width {

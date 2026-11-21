@@ -1,9 +1,6 @@
+use crate::normal::parser::Key;
 
 pub enum Action {
-    MoveLeft,
-    MoveRight,
-    MoveUp,
-    MoveDown,
     InsertChar(char),
     SetNormal,
     SetCommand,
@@ -17,13 +14,6 @@ pub enum Action {
     SetExplorer,
     RemoveChar,
     InserNewLine,
-    StartLine,
-    EndLine,
-    MoveNext,
-    MovePrev,
-    MoveToWord,
-    MoveToPrevWordEnd,
-    MoveToStart,
-    MoveToEnd,
     Quit,
+    NormalKey(Key),
 }
