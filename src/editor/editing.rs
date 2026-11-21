@@ -7,8 +7,6 @@ pub fn insert_char(c: char, buffer: &mut Buffer) {
     if modified {
         buffer.row += 1;
         buffer.mark_modified();
-    } else {
-        return;
     }
 }
 
@@ -36,8 +34,6 @@ pub fn remove_char(buffer: &mut Buffer) {
         if modified.is_some() {
             buffer.row -= 1;
             buffer.mark_modified();
-        } else {
-            return;
         }
     } else if buffer.column > 0 {
         let Some(current_line) = buffer.line(buffer.column) else {

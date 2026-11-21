@@ -82,11 +82,8 @@ impl Buffer {
     }
 
     pub fn char_count(&self, row: usize) -> Option<usize> {
-        let Some(line) = self.line(row) else {
-            return None;
-        };
-
-        return Some(line.chars().count());
+        let line = self.line(row)?;
+        Some(line.chars().count())
     }
 
     pub fn mark_modified(&mut self) {

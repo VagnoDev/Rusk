@@ -19,14 +19,12 @@ use super::{editor_view, explorer_view, status_bar};
 #[derive(Default)]
 pub(super) enum Colors {
     #[default]
-    BLACK,
-    WHITE,
-    RED,
-    GREEN,
-    BLUE,
-    CYAN,
-    YELLOW,
-    RESET,
+    Black,
+    White,
+    Red,
+    Blue,
+    Yellow,
+    Reset,
 }
 
 pub(super) struct Cell {
@@ -43,14 +41,12 @@ pub struct Display {
 
 pub(super) fn terminal_to_color(color: &Colors) -> Color {
     match color {
-        Colors::BLACK => Color::Black,
-        Colors::WHITE => Color::White,
-        Colors::RED => Color::Red,
-        Colors::GREEN => Color::Green,
-        Colors::BLUE => Color::Blue,
-        Colors::CYAN => Color::Cyan,
-        Colors::YELLOW => Color::Yellow,
-        Colors::RESET => Color::Reset,
+        Colors::Black => Color::Black,
+        Colors::White => Color::White,
+        Colors::Red => Color::Red,
+        Colors::Blue => Color::Blue,
+        Colors::Yellow => Color::Yellow,
+        Colors::Reset => Color::Reset,
     }
 }
 
@@ -58,8 +54,8 @@ impl Default for Cell {
     fn default() -> Self {
         Self {
             symbol: ' ',
-            fg: Colors::WHITE,
-            bg: Colors::RESET,
+            fg: Colors::White,
+            bg: Colors::Reset,
         }
     }
 }

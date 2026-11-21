@@ -59,8 +59,8 @@ pub(super) fn draw_status_bar(display: &mut Display, context: &EditorContext, bu
         if let Some(cell) = display.cells.get_mut(start + i) {
             cell.symbol = ' ';
             if is_error {
-                cell.bg = Colors::RED;
-                cell.fg = Colors::WHITE;
+                cell.bg = Colors::Red;
+                cell.fg = Colors::White;
             }
         }
     }

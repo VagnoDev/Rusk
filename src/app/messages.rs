@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 pub enum MessageLevel {
-    Info,
     Success,
     Error,
 }

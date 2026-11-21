@@ -1,4 +1,4 @@
-use crate::{OpenBuffer, app::context::EditorContext, explorer::tree::Explorer};
+use crate::{OpenBuffer, explorer::tree::Explorer};
 
 use super::display::{Colors, Display};
 
@@ -28,15 +28,15 @@ pub(super) fn draw_explorer(display: &mut Display, explorer: &Explorer, buffers:
                 cell.symbol = ch;
 
                 if is_modified {
-                    cell.fg = Colors::YELLOW
+                    cell.fg = Colors::Yellow
                 } else {
-                    cell.fg = Colors::WHITE;
+                    cell.fg = Colors::White;
                 }
 
                 if y == explorer.selected {
-                    cell.bg = Colors::BLUE;
+                    cell.bg = Colors::Blue;
                 } else {
-                    cell.bg = Colors::BLACK;
+                    cell.bg = Colors::Black;
                 }
             }
         }
@@ -50,7 +50,7 @@ pub(super) fn draw_explorer(display: &mut Display, explorer: &Explorer, buffers:
 
             if let Some(cell) = display.cells.get_mut(cell_index) {
                 cell.symbol = '|';
-                cell.fg = Colors::WHITE;
+                cell.fg = Colors::White;
             }
         }
     }

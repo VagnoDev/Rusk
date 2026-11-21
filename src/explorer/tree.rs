@@ -9,13 +9,12 @@ pub struct Entry {
 }
 
 pub struct Explorer {
-    pub current_path: PathBuf,
     pub entries: Vec<Entry>,
     pub selected: usize,
 }
 
 pub fn read_dir(path: &PathBuf, depth: usize) -> Explorer {
-    let entries = std::fs::read_dir(&path)
+    let entries = std::fs::read_dir(path)
         .unwrap_or_else(|e| panic!("cannot read directory {:?}: {}", path, e));
     let mut vec: Vec<Entry> = Vec::new();
 
@@ -28,18 +27,17 @@ pub fn read_dir(path: &PathBuf, depth: usize) -> Explorer {
         let file_type = entry.file_type().unwrap();
 
         let entry = Entry {
-            name: name,
-            path: path,
+            name,
+            path,
             is_dir: file_type.is_dir(),
             expanded: false,
-            depth: depth,
+            depth,
         };
 
         vec.push(entry);
     }
 
     Explorer {
-        current_path: (path.clone()),
         entries: (vec),
         selected: (0),
     }

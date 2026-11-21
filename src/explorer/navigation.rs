@@ -26,10 +26,8 @@ impl Explorer {
             let depth = self.entries[self.selected].depth;
 
             let dir = read_dir(&path, depth + 1);
-            self.entries.splice(
-                self.selected + 1..self.selected + 1,
-                dir.entries.into_iter(),
-            );
+            self.entries
+                .splice(self.selected + 1..self.selected + 1, dir.entries);
             self.entries[self.selected].expanded = true;
         } else if self.entries[self.selected].is_dir && self.entries[self.selected].expanded {
             let depth = self.entries[self.selected].depth;

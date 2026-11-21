@@ -105,7 +105,7 @@ fn main() -> std::io::Result<()> {
                 App {
                     buffers: vec![OpenBuffer {
                         path: Some(file_path.to_path_buf()),
-                        buffer: buffer::fetch(&path)?,
+                        buffer: buffer::fetch(path)?,
                     }],
                     explorer: read_dir(&PathBuf::from(parent), 0),
                     sidebar_visible: false,
@@ -172,11 +172,11 @@ fn main() -> std::io::Result<()> {
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => {
-                    if key.kind == KeyEventKind::Press {
-                        if let Some(realbind) = keybinding(key, &context.mode) {
-                            queue.push_back(realbind);
-                            needs_redraw = true;
-                        }
+                    if key.kind == KeyEventKind::Press
+                        && let Some(realbind) = keybinding(key, &context.mode)
+                    {
+                        queue.push_back(realbind);
+                        needs_redraw = true;
                     }
                 }
                 Event::Resize(width, height) => {
@@ -340,10 +340,10 @@ fn run_command(
                 MotionContext::WithOperator(operator),
                 &mut context.motion_state,
             );
-            if let Ok(MotionResult::Operator(target)) = result {
-                if let Ok(target) = finalize_target(buffer, operator, target) {
-                    finish_operator(buffer, context, operator, direction, target, from);
-                }
+            if let Ok(MotionResult::Operator(target)) = result
+                && let Ok(target) = finalize_target(buffer, operator, target)
+            {
+                finish_operator(buffer, context, operator, direction, target, from);
             }
         }
         Command::Lines {
@@ -489,10 +489,10 @@ fn manager(
     match context.mode {
         Mode::Normal => {
             let lines = &mut buffers[*active_buffer].buffer;
-            if let Action::NormalKey(key) = first {
-                if let Some(status) = normal_key(lines, context, key, editor_height) {
-                    return Ok(status);
-                }
+            if let Action::NormalKey(key) = first
+                && let Some(status) = normal_key(lines, context, key, editor_height)
+            {
+                return Ok(status);
             }
         }
         Mode::Insert => {
@@ -642,7 +642,7 @@ fn manager(
             _ => {}
         },
     }
-    update_viewport(&mut buffers[*active_buffer].buffer, context, editor_height);
+    update_viewport(&buffers[*active_buffer].buffer, context, editor_height);
     Ok(Continue)
 }
 
