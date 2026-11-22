@@ -484,6 +484,36 @@ fn same_file(first: &Path, second: &Path) -> bool {
             .is_ok_and(|first| std::fs::canonicalize(second).is_ok_and(|second| first == second))
 }
 
+fn unsaved_changes(
+    buffers: &[OpenBuffer],
+    active_buffer: usize,
+    context: &mut EditorContext,
+) -> bool {
+    if buffers[active_buffer].buffer.modified {
+        report(
+            context,
+            ResolveError::Failed,
+            "No write since last change (add ! to override)",
+        );
+        return true;
+    }
+
+    let Some(open) = buffers.iter().find(|open| open.buffer.modified) else {
+        return false;
+    };
+
+    let name = open
+        .path
+        .as_ref()
+        .map_or("[No Name]".to_string(), |path| path.display().to_string());
+    report(
+        context,
+        ResolveError::Failed,
+        &format!("No write since last change for buffer \"{name}\""),
+    );
+    true
+}
+
 fn file_info(path: &Path, buffer: &Buffer) -> String {
     match std::fs::metadata(path) {
         Ok(metadata) => format!(
@@ -669,6 +699,9 @@ fn manager(
 
                                 if context.quit_after_save {
                                     context.quit_after_save = false;
+                                    if unsaved_changes(buffers, *active_buffer, context) {
+                                        return Ok(Status::Continue);
+                                    }
                                     return Ok(Status::Quit);
                                 }
                                 send_message(
@@ -719,7 +752,19 @@ fn manager(
                         &command,
                         parser::Command::Write(_) | parser::Command::WriteQuit(_)
                     );
-                    let status = executor::execute(command, lines, context)?;
+                    let force = matches!(&command, parser::Command::ForceQuit);
+                    let status = match executor::execute(command, lines, context) {
+                        Ok(status) => status,
+                        Err(error) => {
+                            set_normal(context);
+                            send_message(
+                                context,
+                                format!("Cannot save file: {error}"),
+                                MessageLevel::Error,
+                            );
+                            return Ok(Status::Continue);
+                        }
+                    };
 
                     if is_saving {
                         buffers[*active_buffer].path = context.file_path.clone();
@@ -729,6 +774,14 @@ fn manager(
                         set_normal(context);
                         send_message(context, "File Saved.".to_string(), MessageLevel::Success);
                         buffers[*active_buffer].path = context.file_path.clone();
+                    }
+
+                    if matches!(status, Status::Quit)
+                        && !force
+                        && unsaved_changes(buffers, *active_buffer, context)
+                    {
+                        set_normal(context);
+                        return Ok(Status::Continue);
                     }
 
                     return Ok(status);
@@ -1173,5 +1226,56 @@ mod tests {
         edit(&mut buffers, &mut active, &mut c, None, false, 10);
         assert_eq!(buffers.len(), 1);
         assert_eq!(buffers[0].buffer.lines, vec!["text"]);
+    }
+
+    #[test]
+    fn unsaved_changes_checks_every_buffer() {
+        let path = temp_file("unsaved_first", "one\n");
+        let other = temp_file("unsaved_other", "other\n");
+        let (mut buffers, mut c) = open(&path);
+        buffers.push(OpenBuffer {
+            path: Some(other.clone()),
+            buffer: buffer::fetch(other.to_str().unwrap()).unwrap(),
+        });
+        assert!(!unsaved_changes(&buffers, 0, &mut c));
+        buffers[1].buffer.modified = true;
+        assert!(unsaved_changes(&buffers, 0, &mut c));
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(other).unwrap();
+    }
+
+    #[test]
+    fn write_other_file_keeps_modified() {
+        let path = temp_file("write_first", "one\n");
+        let other = temp_file("write_other", "");
+        let (mut buffers, mut c) = open(&path);
+        buffers[0].buffer.modified = true;
+        let command = parser::Command::Write(Some(other.to_string_lossy().to_string()));
+        executor::execute(command, &mut buffers[0].buffer, &mut c).unwrap();
+        assert!(buffers[0].buffer.modified);
+        assert_eq!(c.file_path, Some(path.clone()));
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(other).unwrap();
+    }
+
+    #[test]
+    fn write_names_unnamed_buffer() {
+        let other = temp_file("write_unnamed", "");
+        let (mut b, mut c) = setup(&["text"]);
+        b.modified = true;
+        let command = parser::Command::Write(Some(other.to_string_lossy().to_string()));
+        executor::execute(command, &mut b, &mut c).unwrap();
+        assert!(!b.modified);
+        assert_eq!(c.file_path, Some(other.clone()));
+        std::fs::remove_file(other).unwrap();
+    }
+
+    #[test]
+    fn write_error_keeps_buffer() {
+        let (mut b, mut c) = setup(&["text"]);
+        b.modified = true;
+        let command = parser::Command::Write(Some("/rusk_missing_dir/file".to_string()));
+        assert!(executor::execute(command, &mut b, &mut c).is_err());
+        assert!(b.modified);
     }
 }
