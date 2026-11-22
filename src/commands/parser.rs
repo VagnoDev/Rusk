@@ -4,6 +4,8 @@ pub enum Command {
     ForceQuit,
     Write(Option<String>),
     WriteQuit(Option<String>),
+    Edit(Option<String>),
+    ForceEdit(Option<String>),
     Unknown,
 }
 
@@ -21,6 +23,8 @@ pub fn parse(input: &str) -> Command {
         "q!" if path.is_none() => Command::ForceQuit,
         "w" => Command::Write(path),
         "wq" => Command::WriteQuit(path),
+        "e" => Command::Edit(path),
+        "e!" => Command::ForceEdit(path),
         _ => Command::Unknown,
     }
 }

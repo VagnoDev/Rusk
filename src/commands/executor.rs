@@ -57,6 +57,6 @@ pub fn execute(
             Ok(Status::Quit)
         }
 
-        Command::Unknown => Ok(Status::Continue),
+        Command::Edit(_) | Command::ForceEdit(_) | Command::Unknown => Ok(Status::Continue),
     }
 }
