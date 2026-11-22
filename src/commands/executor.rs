@@ -1,8 +1,11 @@
-use std::{io::stdout, path::PathBuf};
+use std::io::stdout;
 
 use crossterm::execute;
 
+use crate::app::context::EditorContext;
 use crate::io::save::save;
+use crate::normal::resolver::ResolveError;
+use crate::report;
 use crate::{Buffer, Status};
 
 use super::parser::Command;
@@ -10,16 +13,29 @@ use super::parser::Command;
 pub fn execute(
     command: Command,
     buffer: &mut Buffer,
-    path: &mut Option<PathBuf>,
+    context: &mut EditorContext,
 ) -> std::io::Result<Status> {
     match command {
-        Command::Quit => Ok(Status::Quit),
+        Command::Quit => {
+            if buffer.modified {
+                report(
+                    context,
+                    ResolveError::Failed,
+                    "No write since last change (add ! to override)",
+                );
+
+                return Ok(Status::Continue);
+            }
+            Ok(Status::Quit)
+        }
+
+        Command::ForceQuit => Ok(Status::Quit),
 
         Command::Write(command_path) => {
             match command_path {
                 Some(new_path) => save(buffer, std::path::Path::new(&new_path))?,
                 None => {
-                    if let Some(path) = path {
+                    if let Some(path) = context.file_path.as_ref() {
                         save(buffer, path)?;
                     }
                 }
@@ -32,7 +48,7 @@ pub fn execute(
             match command_path {
                 Some(new_path) => save(buffer, std::path::Path::new(&new_path))?,
                 None => {
-                    if let Some(path) = path {
+                    if let Some(path) = context.file_path.as_ref() {
                         save(buffer, path)?;
                     }
                 }

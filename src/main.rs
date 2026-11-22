@@ -244,7 +244,7 @@ fn sync_viewport(context: &mut EditorContext, editor_height: usize) {
     };
 }
 
-fn report(context: &mut EditorContext, error: ResolveError, missing: &str) {
+pub fn report(context: &mut EditorContext, error: ResolveError, missing: &str) {
     if error == ResolveError::Failed {
         send_message(context, missing.to_string(), MessageLevel::Error);
     }
@@ -576,7 +576,7 @@ fn manager(
                         &command,
                         parser::Command::Write(_) | parser::Command::WriteQuit(_)
                     );
-                    let status = executor::execute(command, lines, &mut context.file_path)?;
+                    let status = executor::execute(command, lines, context)?;
 
                     if is_saving {
                         buffers[*active_buffer].path = context.file_path.clone();
