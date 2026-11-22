@@ -420,7 +420,7 @@ fn normal_key(
                 return None;
             }
             Key::Char('i') => {
-                insert_backward(buffer, context);
+                insert_backward(context);
                 return None;
             }
             Key::Char(':') => {
@@ -499,7 +499,10 @@ fn manager(
             let lines = &mut buffers[*active_buffer].buffer;
             match first {
                 Action::InsertChar(char) => insert_char(char, lines),
-                Action::SetNormal => set_normal(context),
+                Action::SetNormal => {
+                    set_normal(context);
+                    lines.row = lines.row.saturating_sub(1);
+                }
                 Action::RemoveChar => remove_char(lines),
                 Action::InserNewLine => insert_newline(lines),
                 _ => {}
@@ -568,6 +571,13 @@ fn manager(
 
                         context.savedialog = true;
                         context.command_buffer.clear();
+                        return Ok(Status::Continue);
+                    }
+
+                    if matches!(&command, parser::Command::Unknown) {
+                        let message = format!("Not an editor command: {}", context.command_buffer);
+                        set_normal(context);
+                        send_message(context, message, MessageLevel::Error);
                         return Ok(Status::Continue);
                     }
 
@@ -936,5 +946,65 @@ mod tests {
         assert_eq!(c.pending_keys, "d");
         normal_key(&mut b, &mut c, Key::Esc, 10);
         assert_eq!(c.pending_keys, "");
+    }
+
+    #[test]
+    fn insert_then_normal_keeps_keys_working() {
+        let (b, mut c) = setup(&["one two", "three"]);
+        let mut bufs = vec![OpenBuffer {
+            path: None,
+            buffer: b,
+        }];
+        let mut active = 0;
+        let mut ex = Explorer {
+            entries: vec![],
+            selected: 0,
+        };
+        let mut q = VecDeque::new();
+        let mut run = |a: Action, c: &mut EditorContext, bufs: &mut Vec<OpenBuffer>| {
+            q.push_back(a);
+            manager(&mut q, bufs, &mut active, c, &mut ex, 10).unwrap();
+        };
+        run(Action::NormalKey(Key::Char('c')), &mut c, &mut bufs);
+        run(Action::NormalKey(Key::Char('c')), &mut c, &mut bufs);
+        assert!(matches!(c.mode, Mode::Insert));
+        run(Action::SetNormal, &mut c, &mut bufs);
+        assert!(matches!(c.mode, Mode::Normal));
+        run(Action::NormalKey(Key::Char('i')), &mut c, &mut bufs);
+        assert!(matches!(c.mode, Mode::Insert));
+        run(Action::SetNormal, &mut c, &mut bufs);
+        run(Action::NormalKey(Key::Char('j')), &mut c, &mut bufs);
+        assert_eq!(bufs[0].buffer.column, 1);
+    }
+
+    #[test]
+    fn esc_from_insert_at_line_end_keeps_motions_working() {
+        let (b, mut c) = setup(&["one two", "three"]);
+        let mut bufs = vec![OpenBuffer {
+            path: None,
+            buffer: b,
+        }];
+        let mut active = 0;
+        let mut ex = Explorer {
+            entries: vec![],
+            selected: 0,
+        };
+        let mut q = VecDeque::new();
+        for a in [
+            Action::NormalKey(Key::Char('$')),
+            Action::NormalKey(Key::Char('a')),
+            Action::InsertChar('z'),
+            Action::SetNormal,
+        ] {
+            q.push_back(a);
+            manager(&mut q, &mut bufs, &mut active, &mut c, &mut ex, 10).unwrap();
+        }
+        assert_eq!(bufs[0].buffer.row, 7);
+        q.push_back(Action::NormalKey(Key::Char('b')));
+        manager(&mut q, &mut bufs, &mut active, &mut c, &mut ex, 10).unwrap();
+        assert_eq!(bufs[0].buffer.row, 4);
+        q.push_back(Action::NormalKey(Key::Char('j')));
+        manager(&mut q, &mut bufs, &mut active, &mut c, &mut ex, 10).unwrap();
+        assert_eq!(bufs[0].buffer.column, 1);
     }
 }
