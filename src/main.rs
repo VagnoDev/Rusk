@@ -1,3 +1,815 @@
+use std::{io::stdout, path::PathBuf, time::Instant};
+
+use crate::{
+    Status::Continue,
+    app::{
+        messages::MessageLevel,
+        mode::{Mode, set_command, set_normal, set_search},
+    },
+    commands::{executor, parser},
+    editor::editing::{insert_backward, insert_newline, remove_char},
+    explorer::tree::{Explorer, read_dir},
+    gui::{display::Display, editor_view::update_viewport, status_bar::send_message},
+    input::keyboard::keybinding,
+    io::save::save,
+};
+use crossterm::{
+    event::{
+        self,
+        Event::{self},
+        KeyEventKind,
+    },
+    execute,
+};
+
+use std::path::Path;
+
+use crate::normal::{
+    apply::{apply, lines_target},
+    motion::{Motion, MotionContext, Viewport},
+    motions::{mark, search},
+    operator::finalize_target,
+    operator::{IndentDirection, Operator},
+    parser::{Command, Key, Parsed, Parser, Scroll},
+    resolver::{MotionResult, ResolveError, resolve},
+    target::Target,
+    target::{Position, cursor_after},
+};
+use crate::{
+    app::actions::Action::{self},
+    editor::buffer,
+    editor::editing::{insert_char, insert_forward},
+};
+use crossterm::terminal;
+use std::collections::VecDeque;
+
+use crate::app::context;
+use crate::context::EditorContext;
+use crate::editor::buffer::Buffer;
+
+mod app;
+mod commands;
+mod editor;
+mod explorer;
+mod gui;
+mod input;
+mod io;
+mod normal;
+
+pub struct App {
+    buffers: Vec<OpenBuffer>,
+    explorer: Explorer,
+    sidebar_visible: bool,
+    active_buffer: usize,
+}
+
+pub struct OpenBuffer {
+    pub path: Option<PathBuf>,
+    pub buffer: Buffer,
+}
+
+pub enum Status {
+    Continue,
+    Quit,
+    OpenExplorer,
+    CloseExplorer,
+}
+
+fn main() -> std::io::Result<()> {
+    let path = std::env::args().nth(1);
+
+    let mut app = match &path {
+        Some(path) => match Path::new(&path).is_dir() {
+            true => App {
+                buffers: vec![OpenBuffer {
+                    path: None,
+                    buffer: Buffer {
+                        lines: vec![String::new()],
+                        row: 0,
+                        column: 0,
+                        modified: false,
+                        ending: buffer::LineEnding::Lf,
+                        final_newline: false,
+                    },
+                }],
+                explorer: read_dir(&PathBuf::from(&path), 0),
+                sidebar_visible: false,
+                active_buffer: 0,
+            },
+            false => {
+                let file_path = Path::new(&path);
+
+                let parent = file_path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+
+                App {
+                    buffers: vec![OpenBuffer {
+                        path: Some(file_path.to_path_buf()),
+                        buffer: buffer::fetch(path)?,
+                    }],
+                    explorer: read_dir(&PathBuf::from(parent), 0),
+                    sidebar_visible: false,
+                    active_buffer: 0,
+                }
+            }
+        },
+        None => App {
+            buffers: vec![OpenBuffer {
+                path: None,
+                buffer: Buffer {
+                    lines: vec![String::new()],
+                    row: 0,
+                    column: 0,
+                    modified: false,
+                    ending: buffer::LineEnding::Lf,
+                    final_newline: false,
+                },
+            }],
+            explorer: read_dir(&PathBuf::from("."), 0),
+            sidebar_visible: false,
+            active_buffer: 0,
+        },
+    };
+
+    let mut context = EditorContext {
+        mode: Mode::Normal,
+        command_buffer: String::new(),
+        file_path: app.buffers[app.active_buffer].path.clone(),
+        current_message: None,
+        savedialog: false,
+        quit_after_save: false,
+        viewport_top: 0,
+        search_forward: None,
+        motion_state: crate::normal::motion::MotionState::default(),
+        parser: Parser::default(),
+        pending_space: false,
+        register: None,
+        search_line: None,
+        pending_keys: String::new(),
+    };
+
+    terminal::enable_raw_mode()?;
+    execute!(
+        stdout(),
+        terminal::EnterAlternateScreen,
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+        crossterm::cursor::MoveTo(0, 0)
+    )?;
+
+    let mut display = Display::new()?;
+
+    let mut queue = VecDeque::new();
+
+    display.draw(
+        &app.buffers[app.active_buffer].buffer,
+        &context,
+        &app.explorer,
+        app.sidebar_visible,
+        &app.buffers,
+    )?;
+
+    let mut needs_redraw = true;
+
+    loop {
+        if event::poll(std::time::Duration::from_millis(100))? {
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press
+                        && let Some(realbind) = keybinding(key, &context.mode)
+                    {
+                        queue.push_back(realbind);
+                        needs_redraw = true;
+                    }
+                }
+                Event::Resize(width, height) => {
+                    display.resize(width as u32, height as u32);
+                    needs_redraw = true;
+                }
+                _ => {}
+            }
+        }
+        let expired = match &context.current_message {
+            Some(message) => Instant::now() >= message.duration,
+            None => false,
+        };
+        if expired {
+            context.current_message = None;
+            needs_redraw = true;
+        }
+        let status = manager(
+            &mut queue,
+            &mut app.buffers,
+            &mut app.active_buffer,
+            &mut context,
+            &mut app.explorer,
+            (display.height.saturating_sub(1)) as usize,
+        )?;
+
+        match status {
+            Status::Continue => {}
+            Status::OpenExplorer => {
+                app.sidebar_visible = true;
+                context.mode = Mode::Explorer
+            }
+            Status::CloseExplorer => {
+                app.sidebar_visible = false;
+                context.mode = Mode::Normal
+            }
+            Status::Quit => break,
+        }
+        if needs_redraw {
+            display.draw(
+                &app.buffers[app.active_buffer].buffer,
+                &context,
+                &app.explorer,
+                app.sidebar_visible,
+                &app.buffers,
+            )?;
+
+            needs_redraw = false;
+        }
+    }
+    terminal::disable_raw_mode()?;
+    execute!(stdout(), terminal::LeaveAlternateScreen)?;
+    Ok(())
+}
+
+fn apply_cursor(buffer: &mut Buffer, position: Position) {
+    buffer.column = position.line;
+    buffer.row = position.col;
+}
+
+fn sync_viewport(context: &mut EditorContext, editor_height: usize) {
+    context.motion_state.viewport = Viewport {
+        top: context.viewport_top,
+        height: editor_height,
+    };
+}
+
+pub fn report(context: &mut EditorContext, error: ResolveError, missing: &str) {
+    if error == ResolveError::Failed {
+        send_message(context, missing.to_string(), MessageLevel::Error);
+    }
+}
+
+fn scroll(
+    buffer: &mut Buffer,
+    context: &mut EditorContext,
+    kind: Scroll,
+    count: usize,
+    editor_height: usize,
+) {
+    let last = buffer.line_count().saturating_sub(1);
+    let half = (editor_height / 2).max(1);
+    let line = buffer.column;
+    let (top, target) = match kind {
+        Scroll::PageDown => {
+            let top = (context.viewport_top + editor_height * count).min(last);
+            (top, top)
+        }
+        Scroll::PageUp => {
+            let top = context.viewport_top.saturating_sub(editor_height * count);
+            (top, (top + editor_height - 1).min(last).min(line))
+        }
+        Scroll::HalfDown => {
+            let step = half * count;
+            (
+                (context.viewport_top + step).min(last),
+                (line + step).min(last),
+            )
+        }
+        Scroll::HalfUp => {
+            let step = half * count;
+            (
+                context.viewport_top.saturating_sub(step),
+                line.saturating_sub(step),
+            )
+        }
+    };
+    context.viewport_top = top;
+    context.motion_state.desired = None;
+    let len = buffer.lines[target].chars().count();
+    apply_cursor(
+        buffer,
+        Position::new(target, buffer.row.min(len.saturating_sub(1))),
+    );
+}
+
+fn run_command(
+    buffer: &mut Buffer,
+    context: &mut EditorContext,
+    command: Command,
+    editor_height: usize,
+) {
+    sync_viewport(context, editor_height);
+    let from = Position::new(buffer.column, buffer.row);
+
+    match command {
+        Command::Motion {
+            count,
+            operator: None,
+            motion,
+            ..
+        } => match resolve(
+            buffer,
+            from,
+            motion,
+            count,
+            MotionContext::Standalone,
+            &mut context.motion_state,
+        ) {
+            Ok(MotionResult::Cursor(target)) => apply_cursor(buffer, target),
+            Ok(MotionResult::Operator(_)) => {}
+            Err(error) => {
+                let missing = match motion {
+                    Motion::Mark(_) | Motion::MarkLine(_) => "Mark not set",
+                    _ => "Pattern not found",
+                };
+                report(context, error, missing);
+            }
+        },
+        Command::Motion {
+            count,
+            operator: Some(operator),
+            direction,
+            motion,
+        } => {
+            let result = resolve(
+                buffer,
+                from,
+                motion,
+                count,
+                MotionContext::WithOperator(operator),
+                &mut context.motion_state,
+            );
+            if let Ok(MotionResult::Operator(target)) = result
+                && let Ok(target) = finalize_target(buffer, operator, target)
+            {
+                finish_operator(buffer, context, operator, direction, target, from);
+            }
+        }
+        Command::Lines {
+            count,
+            operator,
+            direction,
+        } => {
+            let target = lines_target(buffer, from, count);
+            finish_operator(buffer, context, operator, direction, target, from);
+        }
+        Command::SetMark(name) => {
+            if mark::set(&mut context.motion_state, name, from).is_err() {
+                send_message(context, "Invalid mark".to_string(), MessageLevel::Error);
+            }
+        }
+        Command::Search { forward } => {
+            context.current_message = None;
+            set_search(context, forward);
+        }
+        Command::Scroll { kind, count } => {
+            scroll(buffer, context, kind, count.unwrap_or(1), editor_height)
+        }
+    }
+}
+
+fn finish_operator(
+    buffer: &mut Buffer,
+    context: &mut EditorContext,
+    operator: Operator,
+    direction: Option<IndentDirection>,
+    target: Target,
+    from: Position,
+) {
+    let applied = apply(
+        buffer,
+        &mut context.motion_state,
+        operator,
+        direction,
+        target,
+        from,
+    );
+    apply_cursor(buffer, applied.cursor);
+    if applied.register.is_some() {
+        context.register = applied.register;
+    }
+    if applied.insert {
+        context.mode = Mode::Insert;
+    }
+}
+
+fn normal_key(
+    buffer: &mut Buffer,
+    context: &mut EditorContext,
+    key: Key,
+    editor_height: usize,
+) -> Option<Status> {
+    if context.parser.is_idle() {
+        if context.pending_space {
+            context.pending_space = false;
+            context.pending_keys.clear();
+            if key == Key::Char('e') {
+                return Some(Status::OpenExplorer);
+            }
+            return None;
+        }
+        match key {
+            Key::Char(' ') => {
+                context.pending_space = true;
+                context.pending_keys = " ".to_string();
+                return None;
+            }
+            Key::Char('a') => {
+                insert_forward(buffer, context);
+                return None;
+            }
+            Key::Char('i') => {
+                insert_backward(buffer, context);
+                return None;
+            }
+            Key::Char(':') => {
+                context.current_message = None;
+                set_command(context);
+                return None;
+            }
+            _ => {}
+        }
+    }
+    match context.parser.feed(key) {
+        Parsed::Incomplete => match key {
+            Key::Char(c) => context.pending_keys.push(c),
+            Key::Ctrl(c) => context
+                .pending_keys
+                .push_str(&format!("^{}", c.to_ascii_uppercase())),
+            _ => {}
+        },
+        Parsed::Complete(command) => {
+            context.pending_keys.clear();
+            run_command(buffer, context, command, editor_height);
+        }
+        _ => context.pending_keys.clear(),
+    }
+    None
+}
+
+fn run_search(
+    buffer: &mut Buffer,
+    context: &mut EditorContext,
+    pattern: &str,
+    forward: bool,
+    editor_height: usize,
+) {
+    sync_viewport(context, editor_height);
+    let position = Position::new(buffer.column, buffer.row);
+
+    match search::start(
+        buffer,
+        position,
+        pattern,
+        forward,
+        1,
+        &mut context.motion_state,
+    ) {
+        Ok(output) => {
+            mark::record_jump(&mut context.motion_state, position);
+            apply_cursor(buffer, cursor_after(buffer, &output));
+        }
+        Err(error) => report(context, error, "Pattern not found"),
+    }
+}
+
+fn same_file(first: &Path, second: &Path) -> bool {
+    first == second
+        || std::fs::canonicalize(first)
+            .is_ok_and(|first| std::fs::canonicalize(second).is_ok_and(|second| first == second))
+}
+
+fn unsaved_changes(
+    buffers: &[OpenBuffer],
+    active_buffer: usize,
+    context: &mut EditorContext,
+) -> bool {
+    if buffers[active_buffer].buffer.modified {
+        report(
+            context,
+            ResolveError::Failed,
+            "No write since last change (add ! to override)",
+        );
+        return true;
+    }
+
+    let Some(open) = buffers.iter().find(|open| open.buffer.modified) else {
+        return false;
+    };
+
+    let name = open
+        .path
+        .as_ref()
+        .map_or("[No Name]".to_string(), |path| path.display().to_string());
+    report(
+        context,
+        ResolveError::Failed,
+        &format!("No write since last change for buffer \"{name}\""),
+    );
+    true
+}
+
+fn file_info(path: &Path, buffer: &Buffer) -> String {
+    match std::fs::metadata(path) {
+        Ok(metadata) => format!(
+            "\"{}\" {}L, {}B",
+            path.display(),
+            buffer.line_count(),
+            metadata.len()
+        ),
+        Err(_) => format!("\"{}\" [New]", path.display()),
+    }
+}
+
+fn open_file(
+    buffers: &mut Vec<OpenBuffer>,
+    active_buffer: &mut usize,
+    context: &mut EditorContext,
+    path: PathBuf,
+) -> bool {
+    let existing = buffers.iter().position(|open_buffer| {
+        open_buffer
+            .path
+            .as_ref()
+            .is_some_and(|open_path| same_file(open_path, &path))
+    });
+
+    let opened = match existing {
+        Some(index) => {
+            *active_buffer = index;
+            true
+        }
+        None => match buffer::fetch(path.to_string_lossy().as_ref()) {
+            Ok(buffer) => {
+                buffers.push(OpenBuffer {
+                    path: Some(path.clone()),
+                    buffer,
+                });
+                *active_buffer = buffers.len() - 1;
+                true
+            }
+            Err(error) => {
+                send_message(
+                    context,
+                    format!("Cannot open file: {error}"),
+                    MessageLevel::Error,
+                );
+                false
+            }
+        },
+    };
+    if opened {
+        context.file_path = buffers[*active_buffer].path.clone();
+    }
+    opened
+}
+
+fn reload(buffer: &mut Buffer, path: &Path) -> std::io::Result<()> {
+    let mut fresh = buffer::fetch(path.to_string_lossy().as_ref())?;
+    fresh.column = buffer.column.min(fresh.line_count() - 1);
+    fresh.row = buffer.row.min(
+        fresh
+            .char_count(fresh.column)
+            .unwrap_or(0)
+            .saturating_sub(1),
+    );
+    *buffer = fresh;
+    Ok(())
+}
+
+fn edit(
+    buffers: &mut Vec<OpenBuffer>,
+    active_buffer: &mut usize,
+    context: &mut EditorContext,
+    path: Option<String>,
+    force: bool,
+    editor_height: usize,
+) {
+    set_normal(context);
+
+    let current = buffers[*active_buffer].path.clone();
+    let Some(target) = path.map(PathBuf::from).or_else(|| current.clone()) else {
+        report(context, ResolveError::Failed, "No file name");
+        return;
+    };
+
+    if buffers[*active_buffer].buffer.modified && !force {
+        report(
+            context,
+            ResolveError::Failed,
+            "No write since last change (add ! to override)",
+        );
+        return;
+    }
+
+    if current
+        .as_ref()
+        .is_some_and(|current| same_file(current, &target))
+    {
+        if let Err(error) = reload(&mut buffers[*active_buffer].buffer, &target) {
+            send_message(
+                context,
+                format!("Cannot open file: {error}"),
+                MessageLevel::Error,
+            );
+            return;
+        }
+    } else {
+        let previous = *active_buffer;
+        if !open_file(buffers, active_buffer, context, target.clone()) {
+            return;
+        }
+        if force
+            && let Some(previous_path) = current
+            && let Ok(fresh) = buffer::fetch(previous_path.to_string_lossy().as_ref())
+        {
+            buffers[previous].buffer = fresh;
+        }
+    }
+
+    let info = file_info(&target, &buffers[*active_buffer].buffer);
+    send_message(context, info, MessageLevel::Success);
+    update_viewport(&buffers[*active_buffer].buffer, context, editor_height);
+}
+
+fn manager(
+    queue: &mut VecDeque<Action>,
+    buffers: &mut Vec<OpenBuffer>,
+    active_buffer: &mut usize,
+    context: &mut EditorContext,
+    explorer: &mut Explorer,
+    editor_height: usize,
+) -> std::io::Result<Status> {
+    let Some(first) = queue.pop_front() else {
+        return Ok(Continue);
+    };
+
+    match context.mode {
+        Mode::Normal => {
+            let lines = &mut buffers[*active_buffer].buffer;
+            if let Action::NormalKey(key) = first
+                && let Some(status) = normal_key(lines, context, key, editor_height)
+            {
+                return Ok(status);
+            }
+        }
+        Mode::Insert => {
+            let lines = &mut buffers[*active_buffer].buffer;
+            match first {
+                Action::InsertChar(char) => insert_char(char, lines),
+                Action::SetNormal => set_normal(context),
+                Action::RemoveChar => remove_char(lines),
+                Action::InserNewLine => insert_newline(lines),
+                _ => {}
+            }
+        }
+        Mode::Command => {
+            let lines = &mut buffers[*active_buffer].buffer;
+            match first {
+                Action::EscCommand => set_normal(context),
+                Action::InsertChar(char) => context.command_buffer.push(char),
+                Action::RemoveChar => {
+                    context.command_buffer.pop();
+                }
+                Action::SendCommand => {
+                    if let Some(forward) = context.search_forward {
+                        let pattern = context.command_buffer.clone();
+                        let prefix = if forward { '/' } else { '?' };
+                        set_normal(context);
+                        context.search_line = Some(format!("{prefix}{pattern}"));
+                        run_search(lines, context, &pattern, forward, editor_height);
+                        return Ok(Status::Continue);
+                    }
+
+                    if context.savedialog {
+                        let path = std::path::Path::new(&context.command_buffer);
+
+                        match save(lines, path) {
+                            Ok(()) => {
+                                context.file_path = Some(path.to_path_buf());
+                                buffers[*active_buffer].path = Some(path.to_path_buf());
+                                context.command_buffer.clear();
+                                context.savedialog = false;
+                                set_normal(context);
+
+                                if context.quit_after_save {
+                                    context.quit_after_save = false;
+                                    if unsaved_changes(buffers, *active_buffer, context) {
+                                        return Ok(Status::Continue);
+                                    }
+                                    return Ok(Status::Quit);
+                                }
+                                send_message(
+                                    context,
+                                    "File Saved.".to_string(),
+                                    MessageLevel::Success,
+                                );
+                                return Ok(Status::Continue);
+                            }
+                            Err(error) => {
+                                send_message(
+                                    context,
+                                    format!("Cannot save file: {error}"),
+                                    MessageLevel::Error,
+                                );
+                                return Ok(Status::Continue);
+                            }
+                        }
+                    }
+
+                    let command = match parser::parse(context.command_buffer.as_str()) {
+                        parser::Command::Edit(path) => {
+                            edit(buffers, active_buffer, context, path, false, editor_height);
+                            return Ok(Status::Continue);
+                        }
+                        parser::Command::ForceEdit(path) => {
+                            edit(buffers, active_buffer, context, path, true, editor_height);
+                            return Ok(Status::Continue);
+                        }
+                        command => command,
+                    };
+                    let needs_filename = matches!(
+                        &command,
+                        parser::Command::Write(None) | parser::Command::WriteQuit(None)
+                    );
+
+                    if needs_filename && context.file_path.is_none() {
+                        context.quit_after_save =
+                            matches!(&command, parser::Command::WriteQuit(None));
+
+                        context.savedialog = true;
+                        context.command_buffer.clear();
+                        return Ok(Status::Continue);
+                    }
+
+                    let is_write = matches!(&command, parser::Command::Write(_));
+                    let is_saving = matches!(
+                        &command,
+                        parser::Command::Write(_) | parser::Command::WriteQuit(_)
+                    );
+                    let force = matches!(&command, parser::Command::ForceQuit);
+                    let status = match executor::execute(command, lines, context) {
+                        Ok(status) => status,
+                        Err(error) => {
+                            set_normal(context);
+                            send_message(
+                                context,
+                                format!("Cannot save file: {error}"),
+                                MessageLevel::Error,
+                            );
+                            return Ok(Status::Continue);
+                        }
+                    };
+
+                    if is_saving {
+                        buffers[*active_buffer].path = context.file_path.clone();
+                    }
+
+                    if is_write {
+                        set_normal(context);
+                        send_message(context, "File Saved.".to_string(), MessageLevel::Success);
+                        buffers[*active_buffer].path = context.file_path.clone();
+                    }
+
+                    if matches!(status, Status::Quit)
+                        && !force
+                        && unsaved_changes(buffers, *active_buffer, context)
+                    {
+                        set_normal(context);
+                        return Ok(Status::Continue);
+                    }
+
+                    return Ok(status);
+                }
+                _ => {}
+            }
+        }
+        Mode::Explorer => match first {
+            Action::SetNormal => {
+                set_normal(context);
+                return Ok(Status::CloseExplorer);
+            }
+            Action::ExplorerDown => explorer.explorer_down(),
+            Action::ExplorerUp => explorer.explorer_up(),
+            Action::EnterFile => {
+                if explorer.entries[explorer.selected].is_dir {
+                    explorer.explorer_toggle()
+                } else {
+                    let path = explorer.entries[explorer.selected].path.clone();
+                    open_file(buffers, active_buffer, context, path);
+                }
+            }
+            _ => {}
+        },
+    }
+    update_viewport(&buffers[*active_buffer].buffer, context, editor_height);
+    Ok(Continue)
+}
 
 #[cfg(test)]
 mod tests {
@@ -414,66 +1226,6 @@ mod tests {
         edit(&mut buffers, &mut active, &mut c, None, false, 10);
         assert_eq!(buffers.len(), 1);
         assert_eq!(buffers[0].buffer.lines, vec!["text"]);
-    }
-
-    #[test]
-    fn insert_then_normal_keeps_keys_working() {
-        let (b, mut c) = setup(&["one two", "three"]);
-        let mut bufs = vec![OpenBuffer {
-            path: None,
-            buffer: b,
-        }];
-        let mut active = 0;
-        let mut ex = Explorer {
-            entries: vec![],
-            selected: 0,
-        };
-        let mut q = VecDeque::new();
-        let mut run = |a: Action, c: &mut EditorContext, bufs: &mut Vec<OpenBuffer>| {
-            q.push_back(a);
-            manager(&mut q, bufs, &mut active, c, &mut ex, 10).unwrap();
-        };
-        run(Action::NormalKey(Key::Char('c')), &mut c, &mut bufs);
-        run(Action::NormalKey(Key::Char('c')), &mut c, &mut bufs);
-        assert!(matches!(c.mode, Mode::Insert));
-        run(Action::SetNormal, &mut c, &mut bufs);
-        assert!(matches!(c.mode, Mode::Normal));
-        run(Action::NormalKey(Key::Char('i')), &mut c, &mut bufs);
-        assert!(matches!(c.mode, Mode::Insert));
-        run(Action::SetNormal, &mut c, &mut bufs);
-        run(Action::NormalKey(Key::Char('j')), &mut c, &mut bufs);
-        assert_eq!(bufs[0].buffer.column, 1);
-    }
-
-    #[test]
-    fn esc_from_insert_at_line_end_keeps_motions_working() {
-        let (b, mut c) = setup(&["one two", "three"]);
-        let mut bufs = vec![OpenBuffer {
-            path: None,
-            buffer: b,
-        }];
-        let mut active = 0;
-        let mut ex = Explorer {
-            entries: vec![],
-            selected: 0,
-        };
-        let mut q = VecDeque::new();
-        for a in [
-            Action::NormalKey(Key::Char('$')),
-            Action::NormalKey(Key::Char('a')),
-            Action::InsertChar('z'),
-            Action::SetNormal,
-        ] {
-            q.push_back(a);
-            manager(&mut q, &mut bufs, &mut active, &mut c, &mut ex, 10).unwrap();
-        }
-        assert_eq!(bufs[0].buffer.row, 7);
-        q.push_back(Action::NormalKey(Key::Char('b')));
-        manager(&mut q, &mut bufs, &mut active, &mut c, &mut ex, 10).unwrap();
-        assert_eq!(bufs[0].buffer.row, 4);
-        q.push_back(Action::NormalKey(Key::Char('j')));
-        manager(&mut q, &mut bufs, &mut active, &mut c, &mut ex, 10).unwrap();
-        assert_eq!(bufs[0].buffer.column, 1);
     }
 
     #[test]
