@@ -1,3 +1,4 @@
+
 name: Release Binaries
 
 on:
@@ -9,9 +10,10 @@ permissions:
   contents: write
 
 jobs:
-  publish-release:
-    name: Build and Release (${{ matrix.target }})
+  build:
+    name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+
     strategy:
       matrix:
         include:
@@ -25,6 +27,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -37,8 +41,110 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Upload binaries to GitHub Release
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/rusk*
+
+  publish-github:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            target/${{ matrix.target }}/release/rusk*
+          files: dist/*
+
+  publish-codeberg:
+    name: Publish Codeberg Release
+    needs: publish-github
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Push release tag to Codeberg
+        env:
+          CODEBERG_USERNAME: ${{ secrets.CODEBERG_USERNAME }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          git -c http.extraheader="AUTHORIZATION: basic $(printf '%s' "$CODEBERG_USERNAME:$CODEBERG_TOKEN" | base64 -w0)" \
+            push https://codeberg.org/VagnoDev/Rusk.git \
+            "$GITHUB_REF:refs/tags/$GITHUB_REF_NAME"
+
+      - name: Create Codeberg Release and upload binaries
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get the release information from GitHub
+          github_release=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")
+
+          name=$(echo "$github_release" | jq -r '.name // .tag_name')
+          body=$(echo "$github_release" | jq -r '.body // ""')
+          prerelease=$(echo "$github_release" | jq -c '.prerelease // false')
+
+          # Create the Codeberg release
+          payload=$(jq -n \
+            --arg tag "$GITHUB_REF_NAME" \
+            --arg name "$name" \
+            --arg body "$body" \
+            --arg target "$GITHUB_SHA" \
+            --argjson prerelease "$prerelease" \
+            '{
+              tag_name: $tag,
+              name: $name,
+              body: $body,
+              target_commitish: $target,
+              draft: false,
+              prerelease: $prerelease
+            }')
+
+          response=$(curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: token $CODEBERG_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "https://codeberg.org/api/v1/repos/VagnoDev/Rusk/releases")
+
+          release_id=$(echo "$response" | jq -r '.id')
+
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
+            echo "Could not create Codeberg release"
+            exit 1
+          fi
+
+          # Upload all binaries
+          for file in dist/*; do
+            [ -f "$file" ] || continue
+
+            echo "Uploading $(basename "$file")"
+
+            curl --fail-with-body --silent --show-error \
+              -X POST \
+              -H "Authorization: token $CODEBERG_TOKEN" \
+              -F "attachment=@${file}" \
+              "https://codeberg.org/api/v1/repos/VagnoDev/Rusk/releases/${release_id}/assets?name=$(basename "$file")"
+          done
+
+          echo "Codeberg release published successfully!"
