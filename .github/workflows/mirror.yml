@@ -1,0 +1,185 @@
+
+name: Mirror to Codeberg
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+  workflow_run:
+    workflows:
+      - "CodeQL Advanced"
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+
+  mirror-branches:
+    name: Mirror secondary branches
+    runs-on: ubuntu-latest
+
+    if: >
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/heads/')
+
+    concurrency:
+      group: mirror-branch-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout branch
+        if: github.event.deleted != true
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Initialize Git for branch deletion
+        if: github.event.deleted == true
+        run: git init
+
+      - name: Push branch to Codeberg
+        env:
+          CODEBERG_USERNAME: ${{ secrets.CODEBERG_USERNAME }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          BRANCH: ${{ github.ref_name }}
+          DELETED: ${{ github.event.deleted }}
+        run: |
+          AUTH=$(printf '%s' "$CODEBERG_USERNAME:$CODEBERG_TOKEN" | base64 -w 0)
+
+          if [ "$DELETED" = "true" ]; then
+            echo "Deleting branch $BRANCH on Codeberg"
+
+            git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
+              push https://codeberg.org/VagnoDev/Rusk.git \
+              ":refs/heads/${BRANCH}"
+          else
+            echo "Syncing branch $BRANCH to Codeberg"
+
+            git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
+              push --force \
+              https://codeberg.org/VagnoDev/Rusk.git \
+              "${GITHUB_SHA}:refs/heads/${BRANCH}"
+          fi
+
+  mirror-main:
+    name: Mirror verified main
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    if: >
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+
+    concurrency:
+      group: mirror-main
+      cancel-in-progress: false
+
+    steps:
+      - name: Wait for Rust CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          echo "Waiting for Rust CI..."
+
+          for i in $(seq 1 60); do
+
+            runs=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SOURCE_SHA}&per_page=100")
+
+            result=$(echo "$runs" | jq -r --arg sha "$SOURCE_SHA" '
+              [.workflow_runs[]
+                | select(.name == "CI & Quality Checks")
+                | select(.event == "push")
+                | select(.head_branch == "main")
+                | select(.head_sha == $sha)]
+              | sort_by(.run_started_at // .created_at)
+              | last
+              | [.status // "", .conclusion // ""]
+              | @tsv
+            ')
+
+            status=$(echo "$result" | cut -f1)
+            conclusion=$(echo "$result" | cut -f2)
+
+            if [ "$status" = "completed" ]; then
+
+              if [ "$conclusion" = "success" ]; then
+                echo "Rust CI passed!"
+                exit 0
+              else
+                echo "Rust CI failed: $conclusion"
+                exit 1
+              fi
+
+            fi
+
+            echo "Waiting for Rust CI... ($i/60)"
+            sleep 30
+
+          done
+
+          echo "Timeout waiting for Rust CI"
+          exit 1
+
+      - name: Verify current main commit
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          CURRENT_SHA=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/branches/main" \
+            --jq '.commit.sha')
+
+          if [ "$CURRENT_SHA" != "$SOURCE_SHA" ]; then
+            echo "main has advanced to another commit."
+            echo "Skipping outdated mirror."
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Commit is still the latest main."
+            echo "sync=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout verified commit
+        if: steps.verify.outputs.sync == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Push verified main and tags
+        if: steps.verify.outputs.sync == 'true'
+        env:
+          CODEBERG_USERNAME: ${{ secrets.CODEBERG_USERNAME }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          AUTH=$(printf '%s' "$CODEBERG_USERNAME:$CODEBERG_TOKEN" | base64 -w 0)
+
+          echo "Syncing verified main to Codeberg..."
+
+          git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
+            push https://codeberg.org/VagnoDev/Rusk.git \
+            "${SOURCE_SHA}:refs/heads/main"
+
+          echo "Syncing tags pointing to verified commit..."
+
+          for tag in $(git tag --points-at "$SOURCE_SHA"); do
+            echo "Pushing tag $tag"
+
+            git -c http.extraheader="AUTHORIZATION: basic $AUTH" \
+              push https://codeberg.org/VagnoDev/Rusk.git "$tag"
+          done
+
+          echo "Mirror completed successfully!"
