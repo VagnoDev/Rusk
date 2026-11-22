@@ -10,6 +10,7 @@ pub struct Buffer {
     pub column: usize,
     pub modified: bool,
     pub ending: LineEnding,
+    pub final_newline: bool,
 }
 
 #[derive(Debug)]
@@ -21,8 +22,8 @@ pub enum LineEnding {
 pub fn fetch(file: &str) -> Result<Buffer, std::io::Error> {
     let mut result = Vec::new();
     let mut line_ending = LineEnding::Lf;
-
     let content = read_to_string(file);
+    let mut final_newline = false;
 
     match content {
         Ok(content) => {
@@ -31,6 +32,8 @@ pub fn fetch(file: &str) -> Result<Buffer, std::io::Error> {
                     line_ending = LineEnding::Crlf;
                 }
             }
+
+            final_newline = content.ends_with('\n');
 
             for line in content.lines() {
                 result.push(line.to_string());
@@ -55,6 +58,7 @@ pub fn fetch(file: &str) -> Result<Buffer, std::io::Error> {
         column: 0,
         modified: false,
         ending: line_ending,
+        final_newline: final_newline
     })
 }
 
