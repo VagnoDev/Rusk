@@ -17,7 +17,7 @@ use crossterm::{
     event::{
         self,
         Event::{self},
-        KeyEventKind,
+        KeyEventKind, MouseEventKind,
     },
     execute,
 };
@@ -154,6 +154,8 @@ fn main() -> std::io::Result<()> {
     execute!(
         stdout(),
         terminal::EnterAlternateScreen,
+        terminal::DisableLineWrap,
+        event::EnableMouseCapture,
         crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
         crossterm::cursor::MoveTo(0, 0)
     )?;
@@ -174,20 +176,48 @@ fn main() -> std::io::Result<()> {
 
     loop {
         if event::poll(std::time::Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    if key.kind == KeyEventKind::Press
-                        && let Some(realbind) = keybinding(key, &context.mode)
-                    {
-                        queue.push_back(realbind);
+            loop {
+                match event::read()? {
+                    Event::Key(key) => {
+                        if key.kind == KeyEventKind::Press
+                            && let Some(realbind) = keybinding(key, &context.mode)
+                        {
+                            queue.push_back(realbind);
+                            needs_redraw = true;
+                        }
+                    }
+                    Event::Mouse(mouse) => {
+                        let up = match mouse.kind {
+                            MouseEventKind::ScrollUp => Some(true),
+                            MouseEventKind::ScrollDown => Some(false),
+                            _ => None,
+                        };
+                        if let Some(up) = up {
+                            if matches!(context.mode, Mode::Explorer) {
+                                queue.push_back(if up {
+                                    Action::ExplorerUp
+                                } else {
+                                    Action::ExplorerDown
+                                });
+                            } else {
+                                wheel_scroll(
+                                    &mut app.buffers[app.active_buffer].buffer,
+                                    &mut context,
+                                    up,
+                                );
+                            }
+                            needs_redraw = true;
+                        }
+                    }
+                    Event::Resize(width, height) => {
+                        display.resize(width as u32, height as u32);
                         needs_redraw = true;
                     }
+                    _ => {}
                 }
-                Event::Resize(width, height) => {
-                    display.resize(width as u32, height as u32);
-                    needs_redraw = true;
+                if !event::poll(std::time::Duration::ZERO)? {
+                    break;
                 }
-                _ => {}
             }
         }
         let expired = match &context.current_message {
@@ -232,7 +262,12 @@ fn main() -> std::io::Result<()> {
         }
     }
     terminal::disable_raw_mode()?;
-    execute!(stdout(), terminal::LeaveAlternateScreen)?;
+    execute!(
+        stdout(),
+        event::DisableMouseCapture,
+        terminal::EnableLineWrap,
+        terminal::LeaveAlternateScreen
+    )?;
     Ok(())
 }
 
@@ -251,6 +286,21 @@ fn sync_viewport(context: &mut EditorContext, editor_height: usize) {
 pub fn report(context: &mut EditorContext, error: ResolveError, missing: &str) {
     if error == ResolveError::Failed {
         send_message(context, missing.to_string(), MessageLevel::Error);
+    }
+}
+
+fn wheel_scroll(buffer: &mut Buffer, context: &mut EditorContext, up: bool) {
+    let from = Position::new(buffer.column, buffer.row);
+    let motion = if up { Motion::Up } else { Motion::Down };
+    if let Ok(MotionResult::Cursor(target)) = resolve(
+        buffer,
+        from,
+        motion,
+        None,
+        MotionContext::Standalone,
+        &mut context.motion_state,
+    ) {
+        apply_cursor(buffer, target);
     }
 }
 
@@ -322,13 +372,14 @@ fn run_command(
         ) {
             Ok(MotionResult::Cursor(target)) => apply_cursor(buffer, target),
             Ok(MotionResult::Operator(_)) => {}
-            Err(error) => {
-                let missing = match motion {
-                    Motion::Mark(_) | Motion::MarkLine(_) => "Mark not set",
-                    _ => "Pattern not found",
-                };
-                report(context, error, missing);
-            }
+            Err(error) => match motion {
+                Motion::Mark(_) | Motion::MarkLine(_) => report(context, error, "Mark not set"),
+                Motion::SearchNext
+                | Motion::SearchPrev
+                | Motion::SearchWordForward
+                | Motion::SearchWordBackward => report(context, error, "Pattern not found"),
+                _ => {}
+            },
         },
         Command::Motion {
             count,
@@ -424,7 +475,7 @@ fn normal_key(
                 return None;
             }
             Key::Char('i') => {
-                insert_backward(buffer, context);
+                insert_backward(context);
                 return None;
             }
             Key::Char(':') => {

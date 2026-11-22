@@ -37,6 +37,12 @@ pub fn read_dir(path: &PathBuf, depth: usize) -> Explorer {
         vec.push(entry);
     }
 
+    vec.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
     Explorer {
         entries: (vec),
         selected: (0),

@@ -27,10 +27,11 @@ pub fn fetch(file: &str) -> Result<Buffer, std::io::Error> {
 
     match content {
         Ok(content) => {
-            if let Some(index) = content.find('\n') {
-                if index > 0 && content.as_bytes()[index - 1] == b'\r' {
-                    line_ending = LineEnding::Crlf;
-                }
+            if let Some(index) = content.find('\n')
+                && index > 0
+                && content.as_bytes()[index - 1] == b'\r'
+            {
+                line_ending = LineEnding::Crlf;
             }
 
             final_newline = content.ends_with('\n');
@@ -58,7 +59,7 @@ pub fn fetch(file: &str) -> Result<Buffer, std::io::Error> {
         column: 0,
         modified: false,
         ending: line_ending,
-        final_newline: final_newline
+        final_newline,
     })
 }
 

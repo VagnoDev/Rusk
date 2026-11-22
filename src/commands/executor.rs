@@ -6,8 +6,8 @@ use crossterm::execute;
 use crate::app::context::EditorContext;
 use crate::io::save::save;
 use crate::normal::resolver::ResolveError;
-use crate::{report, same_file};
 use crate::{Buffer, Status};
+use crate::{report, same_file};
 
 use super::parser::Command;
 
@@ -62,7 +62,11 @@ pub fn execute(
     }
 }
 
-fn save_as(buffer: &mut Buffer, context: &mut EditorContext, new_path: &str) -> std::io::Result<()> {
+fn save_as(
+    buffer: &mut Buffer,
+    context: &mut EditorContext,
+    new_path: &str,
+) -> std::io::Result<()> {
     let path = Path::new(new_path);
     let modified = buffer.modified;
     save(buffer, path)?;
