@@ -19,12 +19,7 @@ pub fn insert_forward(buffer: &mut Buffer, context: &mut EditorContext) {
 
     context.mode = Mode::Insert;
 }
-pub fn insert_backward(buffer: &mut Buffer, context: &mut EditorContext) {
-    if buffer.row == 0 {
-        return;
-    }
-
-    buffer.row -= 1;
+pub fn insert_backward(context: &mut EditorContext) {
     context.mode = Mode::Insert;
 }
 
