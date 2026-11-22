@@ -1,4 +1,7 @@
-use std::{fs::read_to_string, io::ErrorKind};
+use std::{
+    fs::read_to_string,
+    io::ErrorKind::{self},
+};
 
 #[derive(Debug)]
 pub struct Buffer {
@@ -6,15 +9,29 @@ pub struct Buffer {
     pub row: usize,
     pub column: usize,
     pub modified: bool,
+    pub ending: LineEnding,
+}
+
+#[derive(Debug)]
+pub enum LineEnding {
+    Lf,
+    Crlf,
 }
 
 pub fn fetch(file: &str) -> Result<Buffer, std::io::Error> {
     let mut result = Vec::new();
+    let mut line_ending = LineEnding::Lf;
 
     let content = read_to_string(file);
 
     match content {
         Ok(content) => {
+            if let Some(index) = content.find('\n') {
+                if index > 0 && content.as_bytes()[index - 1] == b'\r' {
+                    line_ending = LineEnding::Crlf;
+                }
+            }
+
             for line in content.lines() {
                 result.push(line.to_string());
             }
@@ -37,6 +54,7 @@ pub fn fetch(file: &str) -> Result<Buffer, std::io::Error> {
         row: 0,
         column: 0,
         modified: false,
+        ending: line_ending,
     })
 }
 

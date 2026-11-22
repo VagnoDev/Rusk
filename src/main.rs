@@ -88,6 +88,7 @@ fn main() -> std::io::Result<()> {
                         row: 0,
                         column: 0,
                         modified: false,
+                        ending: buffer::LineEnding::Lf,
                     },
                 }],
                 explorer: read_dir(&PathBuf::from(&path), 0),
@@ -121,6 +122,7 @@ fn main() -> std::io::Result<()> {
                     row: 0,
                     column: 0,
                     modified: false,
+                    ending: buffer::LineEnding::Lf,
                 },
             }],
             explorer: read_dir(&PathBuf::from("."), 0),
@@ -656,6 +658,7 @@ mod tests {
             row: 0,
             column: 0,
             modified: false,
+            ending: crate::editor::buffer::LineEnding::Lf,
         };
         let context = EditorContext {
             mode: Mode::Normal,

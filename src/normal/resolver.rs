@@ -155,6 +155,7 @@ mod tests {
             row: 0,
             column: 0,
             modified: false,
+            ending: crate::editor::buffer::LineEnding::Lf,
         }
     }
 
