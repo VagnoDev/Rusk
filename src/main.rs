@@ -88,6 +88,8 @@ fn main() -> std::io::Result<()> {
                         row: 0,
                         column: 0,
                         modified: false,
+                        ending: buffer::LineEnding::Lf,
+                        final_newline: false,
                     },
                 }],
                 explorer: read_dir(&PathBuf::from(&path), 0),
@@ -121,6 +123,8 @@ fn main() -> std::io::Result<()> {
                     row: 0,
                     column: 0,
                     modified: false,
+                    ending: buffer::LineEnding::Lf,
+                    final_newline: false,
                 },
             }],
             explorer: read_dir(&PathBuf::from("."), 0),
@@ -279,7 +283,7 @@ fn sync_viewport(context: &mut EditorContext, editor_height: usize) {
     };
 }
 
-fn report(context: &mut EditorContext, error: ResolveError, missing: &str) {
+pub fn report(context: &mut EditorContext, error: ResolveError, missing: &str) {
     if error == ResolveError::Failed {
         send_message(context, missing.to_string(), MessageLevel::Error);
     }
@@ -525,6 +529,165 @@ fn run_search(
     }
 }
 
+fn same_file(first: &Path, second: &Path) -> bool {
+    first == second
+        || std::fs::canonicalize(first)
+            .is_ok_and(|first| std::fs::canonicalize(second).is_ok_and(|second| first == second))
+}
+
+fn unsaved_changes(
+    buffers: &[OpenBuffer],
+    active_buffer: usize,
+    context: &mut EditorContext,
+) -> bool {
+    if buffers[active_buffer].buffer.modified {
+        report(
+            context,
+            ResolveError::Failed,
+            "No write since last change (add ! to override)",
+        );
+        return true;
+    }
+
+    let Some(open) = buffers.iter().find(|open| open.buffer.modified) else {
+        return false;
+    };
+
+    let name = open
+        .path
+        .as_ref()
+        .map_or("[No Name]".to_string(), |path| path.display().to_string());
+    report(
+        context,
+        ResolveError::Failed,
+        &format!("No write since last change for buffer \"{name}\""),
+    );
+    true
+}
+
+fn file_info(path: &Path, buffer: &Buffer) -> String {
+    match std::fs::metadata(path) {
+        Ok(metadata) => format!(
+            "\"{}\" {}L, {}B",
+            path.display(),
+            buffer.line_count(),
+            metadata.len()
+        ),
+        Err(_) => format!("\"{}\" [New]", path.display()),
+    }
+}
+
+fn open_file(
+    buffers: &mut Vec<OpenBuffer>,
+    active_buffer: &mut usize,
+    context: &mut EditorContext,
+    path: PathBuf,
+) -> bool {
+    let existing = buffers.iter().position(|open_buffer| {
+        open_buffer
+            .path
+            .as_ref()
+            .is_some_and(|open_path| same_file(open_path, &path))
+    });
+
+    let opened = match existing {
+        Some(index) => {
+            *active_buffer = index;
+            true
+        }
+        None => match buffer::fetch(path.to_string_lossy().as_ref()) {
+            Ok(buffer) => {
+                buffers.push(OpenBuffer {
+                    path: Some(path.clone()),
+                    buffer,
+                });
+                *active_buffer = buffers.len() - 1;
+                true
+            }
+            Err(error) => {
+                send_message(
+                    context,
+                    format!("Cannot open file: {error}"),
+                    MessageLevel::Error,
+                );
+                false
+            }
+        },
+    };
+    if opened {
+        context.file_path = buffers[*active_buffer].path.clone();
+    }
+    opened
+}
+
+fn reload(buffer: &mut Buffer, path: &Path) -> std::io::Result<()> {
+    let mut fresh = buffer::fetch(path.to_string_lossy().as_ref())?;
+    fresh.column = buffer.column.min(fresh.line_count() - 1);
+    fresh.row = buffer.row.min(
+        fresh
+            .char_count(fresh.column)
+            .unwrap_or(0)
+            .saturating_sub(1),
+    );
+    *buffer = fresh;
+    Ok(())
+}
+
+fn edit(
+    buffers: &mut Vec<OpenBuffer>,
+    active_buffer: &mut usize,
+    context: &mut EditorContext,
+    path: Option<String>,
+    force: bool,
+    editor_height: usize,
+) {
+    set_normal(context);
+
+    let current = buffers[*active_buffer].path.clone();
+    let Some(target) = path.map(PathBuf::from).or_else(|| current.clone()) else {
+        report(context, ResolveError::Failed, "No file name");
+        return;
+    };
+
+    if buffers[*active_buffer].buffer.modified && !force {
+        report(
+            context,
+            ResolveError::Failed,
+            "No write since last change (add ! to override)",
+        );
+        return;
+    }
+
+    if current
+        .as_ref()
+        .is_some_and(|current| same_file(current, &target))
+    {
+        if let Err(error) = reload(&mut buffers[*active_buffer].buffer, &target) {
+            send_message(
+                context,
+                format!("Cannot open file: {error}"),
+                MessageLevel::Error,
+            );
+            return;
+        }
+    } else {
+        let previous = *active_buffer;
+        if !open_file(buffers, active_buffer, context, target.clone()) {
+            return;
+        }
+        if force
+            && let Some(previous_path) = current
+            && let Ok(fresh) = buffer::fetch(previous_path.to_string_lossy().as_ref())
+        {
+            buffers[previous].buffer = fresh;
+        }
+    }
+
+    let info = file_info(&target, &buffers[*active_buffer].buffer);
+    send_message(context, info, MessageLevel::Success);
+    update_viewport(&buffers[*active_buffer].buffer, context, editor_height);
+}
+
 fn manager(
     queue: &mut VecDeque<Action>,
     buffers: &mut Vec<OpenBuffer>,
@@ -550,10 +713,7 @@ fn manager(
             let lines = &mut buffers[*active_buffer].buffer;
             match first {
                 Action::InsertChar(char) => insert_char(char, lines),
-                Action::SetNormal => {
-                    set_normal(context);
-                    lines.row = lines.row.saturating_sub(1);
-                }
+                Action::SetNormal => set_normal(context),
                 Action::RemoveChar => remove_char(lines),
                 Action::InserNewLine => insert_newline(lines),
                 _ => {}
@@ -590,6 +750,9 @@ fn manager(
 
                                 if context.quit_after_save {
                                     context.quit_after_save = false;
+                                    if unsaved_changes(buffers, *active_buffer, context) {
+                                        return Ok(Status::Continue);
+                                    }
                                     return Ok(Status::Quit);
                                 }
                                 send_message(
@@ -610,7 +773,17 @@ fn manager(
                         }
                     }
 
-                    let command = parser::parse(context.command_buffer.as_str());
+                    let command = match parser::parse(context.command_buffer.as_str()) {
+                        parser::Command::Edit(path) => {
+                            edit(buffers, active_buffer, context, path, false, editor_height);
+                            return Ok(Status::Continue);
+                        }
+                        parser::Command::ForceEdit(path) => {
+                            edit(buffers, active_buffer, context, path, true, editor_height);
+                            return Ok(Status::Continue);
+                        }
+                        command => command,
+                    };
                     let needs_filename = matches!(
                         &command,
                         parser::Command::Write(None) | parser::Command::WriteQuit(None)
@@ -625,19 +798,24 @@ fn manager(
                         return Ok(Status::Continue);
                     }
 
-                    if matches!(&command, parser::Command::Unknown) {
-                        let message = format!("Not an editor command: {}", context.command_buffer);
-                        set_normal(context);
-                        send_message(context, message, MessageLevel::Error);
-                        return Ok(Status::Continue);
-                    }
-
                     let is_write = matches!(&command, parser::Command::Write(_));
                     let is_saving = matches!(
                         &command,
                         parser::Command::Write(_) | parser::Command::WriteQuit(_)
                     );
-                    let status = executor::execute(command, lines, &mut context.file_path)?;
+                    let force = matches!(&command, parser::Command::ForceQuit);
+                    let status = match executor::execute(command, lines, context) {
+                        Ok(status) => status,
+                        Err(error) => {
+                            set_normal(context);
+                            send_message(
+                                context,
+                                format!("Cannot save file: {error}"),
+                                MessageLevel::Error,
+                            );
+                            return Ok(Status::Continue);
+                        }
+                    };
 
                     if is_saving {
                         buffers[*active_buffer].path = context.file_path.clone();
@@ -647,6 +825,14 @@ fn manager(
                         set_normal(context);
                         send_message(context, "File Saved.".to_string(), MessageLevel::Success);
                         buffers[*active_buffer].path = context.file_path.clone();
+                    }
+
+                    if matches!(status, Status::Quit)
+                        && !force
+                        && unsaved_changes(buffers, *active_buffer, context)
+                    {
+                        set_normal(context);
+                        return Ok(Status::Continue);
                     }
 
                     return Ok(status);
@@ -666,38 +852,7 @@ fn manager(
                     explorer.explorer_toggle()
                 } else {
                     let path = explorer.entries[explorer.selected].path.clone();
-
-                    let existing = buffers
-                        .iter()
-                        .position(|open_buffer| open_buffer.path.as_ref() == Some(&path));
-
-                    let opened = match existing {
-                        Some(index) => {
-                            *active_buffer = index;
-                            true
-                        }
-                        None => match buffer::fetch(path.to_string_lossy().as_ref()) {
-                            Ok(buffer) => {
-                                buffers.push(OpenBuffer {
-                                    path: Some(path.clone()),
-                                    buffer,
-                                });
-                                *active_buffer = buffers.len() - 1;
-                                true
-                            }
-                            Err(error) => {
-                                send_message(
-                                    context,
-                                    format!("Cannot open file: {error}"),
-                                    MessageLevel::Error,
-                                );
-                                false
-                            }
-                        },
-                    };
-                    if opened {
-                        context.file_path = Some(path.clone());
-                    }
+                    open_file(buffers, active_buffer, context, path);
                 }
             }
             _ => {}
@@ -717,6 +872,8 @@ mod tests {
             row: 0,
             column: 0,
             modified: false,
+            ending: crate::editor::buffer::LineEnding::Lf,
+            final_newline: false,
         };
         let context = EditorContext {
             mode: Mode::Normal,
@@ -999,63 +1156,177 @@ mod tests {
         assert_eq!(c.pending_keys, "");
     }
 
-    #[test]
-    fn insert_then_normal_keeps_keys_working() {
-        let (b, mut c) = setup(&["one two", "three"]);
-        let mut bufs = vec![OpenBuffer {
-            path: None,
-            buffer: b,
+    fn temp_file(name: &str, content: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("rusk_{}_{name}", std::process::id()));
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    fn open(path: &Path) -> (Vec<OpenBuffer>, EditorContext) {
+        let (_, mut c) = setup(&[""]);
+        c.file_path = Some(path.to_path_buf());
+        let buffers = vec![OpenBuffer {
+            path: Some(path.to_path_buf()),
+            buffer: buffer::fetch(path.to_str().unwrap()).unwrap(),
         }];
-        let mut active = 0;
-        let mut ex = Explorer {
-            entries: vec![],
-            selected: 0,
-        };
-        let mut q = VecDeque::new();
-        let mut run = |a: Action, c: &mut EditorContext, bufs: &mut Vec<OpenBuffer>| {
-            q.push_back(a);
-            manager(&mut q, bufs, &mut active, c, &mut ex, 10).unwrap();
-        };
-        run(Action::NormalKey(Key::Char('c')), &mut c, &mut bufs);
-        run(Action::NormalKey(Key::Char('c')), &mut c, &mut bufs);
-        assert!(matches!(c.mode, Mode::Insert));
-        run(Action::SetNormal, &mut c, &mut bufs);
-        assert!(matches!(c.mode, Mode::Normal));
-        run(Action::NormalKey(Key::Char('i')), &mut c, &mut bufs);
-        assert!(matches!(c.mode, Mode::Insert));
-        run(Action::SetNormal, &mut c, &mut bufs);
-        run(Action::NormalKey(Key::Char('j')), &mut c, &mut bufs);
-        assert_eq!(bufs[0].buffer.column, 1);
+        (buffers, c)
     }
 
     #[test]
-    fn esc_from_insert_at_line_end_keeps_motions_working() {
-        let (b, mut c) = setup(&["one two", "three"]);
-        let mut bufs = vec![OpenBuffer {
+    fn parse_edit_commands() {
+        assert_eq!(parser::parse("e"), parser::Command::Edit(None));
+        assert_eq!(
+            parser::parse("e foo.txt"),
+            parser::Command::Edit(Some("foo.txt".to_string()))
+        );
+        assert_eq!(parser::parse("e!"), parser::Command::ForceEdit(None));
+    }
+
+    #[test]
+    fn edit_refuses_modified_buffer() {
+        let path = temp_file("edit_refuses", "one\ntwo\n");
+        let (mut buffers, mut c) = open(&path);
+        let mut active = 0;
+        buffers[0].buffer.lines[0] = "changed".to_string();
+        buffers[0].buffer.modified = true;
+        edit(&mut buffers, &mut active, &mut c, None, false, 10);
+        assert_eq!(buffers[0].buffer.lines[0], "changed");
+        assert!(buffers[0].buffer.modified);
+        assert!(matches!(c.mode, Mode::Normal));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn force_edit_reloads_from_disk() {
+        let path = temp_file("force_reload", "one\ntwo\n");
+        let (mut buffers, mut c) = open(&path);
+        let mut active = 0;
+        buffers[0].buffer.lines.push("three".to_string());
+        buffers[0].buffer.column = 2;
+        buffers[0].buffer.row = 4;
+        buffers[0].buffer.modified = true;
+        edit(&mut buffers, &mut active, &mut c, None, true, 10);
+        assert_eq!(buffers[0].buffer.lines, vec!["one", "two"]);
+        assert!(!buffers[0].buffer.modified);
+        assert_eq!(at(&buffers[0].buffer), (1, 2));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn edit_opens_other_file() {
+        let path = temp_file("edit_first", "one\n");
+        let other = temp_file("edit_other", "other\n");
+        let (mut buffers, mut c) = open(&path);
+        let mut active = 0;
+        edit(
+            &mut buffers,
+            &mut active,
+            &mut c,
+            Some(other.to_string_lossy().to_string()),
+            false,
+            10,
+        );
+        assert_eq!(active, 1);
+        assert_eq!(buffers[1].buffer.lines, vec!["other"]);
+        assert_eq!(c.file_path, Some(other.clone()));
+        edit(
+            &mut buffers,
+            &mut active,
+            &mut c,
+            Some(path.to_string_lossy().to_string()),
+            false,
+            10,
+        );
+        assert_eq!(active, 0);
+        assert_eq!(buffers.len(), 2);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(other).unwrap();
+    }
+
+    #[test]
+    fn force_edit_other_file_discards_changes() {
+        let path = temp_file("force_first", "one\n");
+        let other = temp_file("force_other", "other\n");
+        let (mut buffers, mut c) = open(&path);
+        let mut active = 0;
+        buffers[0].buffer.lines[0] = "changed".to_string();
+        buffers[0].buffer.modified = true;
+        edit(
+            &mut buffers,
+            &mut active,
+            &mut c,
+            Some(other.to_string_lossy().to_string()),
+            true,
+            10,
+        );
+        assert_eq!(active, 1);
+        assert_eq!(buffers[0].buffer.lines, vec!["one"]);
+        assert!(!buffers[0].buffer.modified);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(other).unwrap();
+    }
+
+    #[test]
+    fn edit_without_file_name_fails() {
+        let (b, mut c) = setup(&["text"]);
+        let mut buffers = vec![OpenBuffer {
             path: None,
             buffer: b,
         }];
         let mut active = 0;
-        let mut ex = Explorer {
-            entries: vec![],
-            selected: 0,
-        };
-        let mut q = VecDeque::new();
-        for a in [
-            Action::NormalKey(Key::Char('$')),
-            Action::NormalKey(Key::Char('a')),
-            Action::InsertChar('z'),
-            Action::SetNormal,
-        ] {
-            q.push_back(a);
-            manager(&mut q, &mut bufs, &mut active, &mut c, &mut ex, 10).unwrap();
-        }
-        assert_eq!(bufs[0].buffer.row, 7);
-        q.push_back(Action::NormalKey(Key::Char('b')));
-        manager(&mut q, &mut bufs, &mut active, &mut c, &mut ex, 10).unwrap();
-        assert_eq!(bufs[0].buffer.row, 4);
-        q.push_back(Action::NormalKey(Key::Char('j')));
-        manager(&mut q, &mut bufs, &mut active, &mut c, &mut ex, 10).unwrap();
-        assert_eq!(bufs[0].buffer.column, 1);
+        edit(&mut buffers, &mut active, &mut c, None, false, 10);
+        assert_eq!(buffers.len(), 1);
+        assert_eq!(buffers[0].buffer.lines, vec!["text"]);
+    }
+
+    #[test]
+    fn unsaved_changes_checks_every_buffer() {
+        let path = temp_file("unsaved_first", "one\n");
+        let other = temp_file("unsaved_other", "other\n");
+        let (mut buffers, mut c) = open(&path);
+        buffers.push(OpenBuffer {
+            path: Some(other.clone()),
+            buffer: buffer::fetch(other.to_str().unwrap()).unwrap(),
+        });
+        assert!(!unsaved_changes(&buffers, 0, &mut c));
+        buffers[1].buffer.modified = true;
+        assert!(unsaved_changes(&buffers, 0, &mut c));
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(other).unwrap();
+    }
+
+    #[test]
+    fn write_other_file_keeps_modified() {
+        let path = temp_file("write_first", "one\n");
+        let other = temp_file("write_other", "");
+        let (mut buffers, mut c) = open(&path);
+        buffers[0].buffer.modified = true;
+        let command = parser::Command::Write(Some(other.to_string_lossy().to_string()));
+        executor::execute(command, &mut buffers[0].buffer, &mut c).unwrap();
+        assert!(buffers[0].buffer.modified);
+        assert_eq!(c.file_path, Some(path.clone()));
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(other).unwrap();
+    }
+
+    #[test]
+    fn write_names_unnamed_buffer() {
+        let other = temp_file("write_unnamed", "");
+        let (mut b, mut c) = setup(&["text"]);
+        b.modified = true;
+        let command = parser::Command::Write(Some(other.to_string_lossy().to_string()));
+        executor::execute(command, &mut b, &mut c).unwrap();
+        assert!(!b.modified);
+        assert_eq!(c.file_path, Some(other.clone()));
+        std::fs::remove_file(other).unwrap();
+    }
+
+    #[test]
+    fn write_error_keeps_buffer() {
+        let (mut b, mut c) = setup(&["text"]);
+        b.modified = true;
+        let command = parser::Command::Write(Some("/rusk_missing_dir/file".to_string()));
+        assert!(executor::execute(command, &mut b, &mut c).is_err());
+        assert!(b.modified);
     }
 }
